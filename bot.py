@@ -22,7 +22,9 @@ from telegram.ext import (
 )
 
 DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
-BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
+# Railway injects Variables as environment variables; .env is optional for local runs.
+# Accept TELEGRAM_BOT_TOKEN as an alias to avoid a common naming mismatch.
+BOT_TOKEN = (os.getenv('BOT_TOKEN') or os.getenv('TELEGRAM_BOT_TOKEN') or '').strip()
 ADMIN_IDS = {int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip().isdigit()}
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
 QR_BANK = os.getenv('QR_BANK', 'VietinBank').strip()
@@ -900,9 +902,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update,context): log.exception('Unhandled error',exc_info=context.error)
 
 def main():
-    if not BOT_TOKEN: raise SystemExit('Thiếu BOT_TOKEN trong .env')
-    if not DATABASE_URL: raise SystemExit('Thiếu DATABASE_URL trong .env')
-    if not ADMIN_IDS: raise SystemExit('Thiếu ADMIN_IDS trong .env')
+    if not BOT_TOKEN:
+        raise SystemExit('THIEU BOT_TOKEN: vao Railway > Service > Variables, them BOT_TOKEN = token lay tu @BotFather, sau do Deploy lai. Co the dung TELEGRAM_BOT_TOKEN thay the.')
+    if not DATABASE_URL:
+        raise SystemExit('THIEU DATABASE_URL: vao Railway > Service > Variables va them DATABASE_URL (PostgreSQL connection string).')
+    if not ADMIN_IDS:
+        raise SystemExit('THIEU ADMIN_IDS: vao Railway > Service > Variables va them ADMIN_IDS = Telegram ID so cua admin.')
     try:
         init_db()
         log.info('Database schema initialized')
