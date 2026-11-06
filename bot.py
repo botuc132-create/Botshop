@@ -22,9 +22,7 @@ from telegram.ext import (
 )
 
 DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
-# Railway injects Variables as environment variables; .env is optional for local runs.
-# Accept TELEGRAM_BOT_TOKEN as an alias to avoid a common naming mismatch.
-BOT_TOKEN = (os.getenv('BOT_TOKEN') or os.getenv('TELEGRAM_BOT_TOKEN') or '').strip()
+BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
 ADMIN_IDS = {int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip().isdigit()}
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
 QR_BANK = os.getenv('QR_BANK', 'VietinBank').strip()
@@ -34,8 +32,6 @@ QR_TEMPLATE = os.getenv('QR_TEMPLATE', 'compact').strip()
 QR_SHOWINFO = os.getenv('QR_SHOWINFO', 'false').strip().lower()
 QR_MEMO_PREFIX = 'SEVQR'  # VietinBank requires SEVQR in the transfer description.
 QR_MEMO_SUFFIX = os.getenv('QR_MEMO_SUFFIX', 'NAP').strip().upper() or 'NAP'
-# Telegram custom emoji supplied by the bot owner. Rendered in HTML-capable menu messages.
-BOT_CUSTOM_EMOJI = '<tg-emoji emoji-id="6168207816042487487">✨</tg-emoji>'
 DB_POOL = None
 logging.basicConfig(format='%(asctime)s | %(levelname)s | %(name)s | %(message)s', level=LOG_LEVEL)
 log = logging.getLogger('key_shop_bot')
@@ -202,13 +198,13 @@ def init_db():
 
 def user_menu_text(user, balance):
     name = escape(user.full_name or 'Khách hàng')
-    return (f'{BOT_CUSTOM_EMOJI} 🎉 Xin chào, {name}!\n🛍 CHÀO MỪNG BẠN ĐẾN VỚI SHOP\n\n'
+    return (f'🎉 Xin chào, {name}!\n🛍 CHÀO MỪNG BẠN ĐẾN VỚI SHOP\n\n'
             f'━━━━━━━━━━━━━━━━━━\n👤 Tên: {name}\n🆔 ID: {user.id}\n'
             f'📛 Username: @{escape(user.username) if user.username else "Không có"}\n'
             f'💰 Số dư: {balance:,}đ\n━━━━━━━━━━━━━━━━━━\n\n'
             f'👇 Chọn chức năng bên dưới:')
 
-def admin_menu_text(): return f'{BOT_CUSTOM_EMOJI} 🛠 QUẢN TRỊ SHOP\nChọn chức năng bên dưới:'
+def admin_menu_text(): return '🛠 QUẢN TRỊ SHOP\nChọn chức năng bên dưới:'
 
 def maintenance_enabled():
     with db() as con:
@@ -269,7 +265,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_cmd(update, context):
     if not is_admin(update): await update.message.reply_text('⛔ Không có quyền admin.', reply_markup=USER_KB); return
-    context.user_data.clear(); await update.message.reply_text(admin_menu_text(), reply_markup=ADMIN_KB, parse_mode='HTML')
+    context.user_data.clear(); await update.message.reply_text(admin_menu_text(), reply_markup=ADMIN_KB)
 
 async def show_shop(message, edit=False):
     cats = get_categories()
@@ -512,7 +508,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: await show_confirm(q,int(oid),int(qty),context)
     elif data=='shop:confirm': await do_purchase(q,update,context)
     elif data=='shop:cancel': context.user_data.pop('pending_purchase',None); await q.edit_message_text('Đã hủy đơn mua hàng.',reply_markup=inline_back('shop:home'))
-    elif data=='adm:menu': await q.edit_message_text(admin_menu_text(),reply_markup=ADMIN_KB,parse_mode='HTML')
+    elif data=='adm:menu': await q.edit_message_text(admin_menu_text(),reply_markup=ADMIN_KB)
     elif data=='adm:emoji':
         try:
             sticker_set = await context.bot.get_sticker_set(name='NewsEmoji')
@@ -796,9 +792,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 con.execute('UPDATE users SET last_deposit_request_at=? WHERE user_id=?',(datetime.now(timezone.utc),uid))
             context.user_data['flow']=None
             qr_url=make_qr_url(amount,memo)
-            caption=(f'💳 THÔNG TIN NẠP TIỀN\n\n🧾 Mã đơn: #{deposit_id}\n💰 Số tiền: {amount:,}đ\n🏦 Ngân hàng: {QR_BANK}\n📝 Nội dung chuyển khoản: {memo}\n\nQuét mã QR để chuyển khoản đúng số tiền và nội dung. Sau khi chuyển xong, bấm “Đã chuyển tiền”.')
+            caption=(f'<tg-emoji emoji-id="6168207816042487487">✨</tg-emoji> THÔNG TIN NẠP TIỀN\n\n<tg-emoji emoji-id="6168207816042487487">✨</tg-emoji> Mã đơn: #{deposit_id}\n<tg-emoji emoji-id="6168207816042487487">✨</tg-emoji> Số tiền: {amount:,}đ\n<tg-emoji emoji-id="6168207816042487487">✨</tg-emoji> Ngân hàng: {QR_BANK}\n<tg-emoji emoji-id="6168207816042487487">✨</tg-emoji> Nội dung chuyển khoản: {memo}\n\nQuét mã QR để chuyển khoản đúng số tiền và nội dung. Sau khi chuyển xong, bấm “Đã chuyển tiền”.')
             kb=InlineKeyboardMarkup([[InlineKeyboardButton('✅ Đã chuyển tiền',callback_data=f'deposit:submitted:{deposit_id}')],[InlineKeyboardButton('❌ Hủy',callback_data=f'deposit:cancel:{deposit_id}')]])
-            await msg.reply_photo(photo=qr_url,caption=caption,reply_markup=kb)
+            await msg.reply_photo(photo=qr_url,caption=caption,reply_markup=kb,parse_mode='HTML')
         except Exception:
             log.exception('Create deposit request failed')
             await msg.reply_text('⚠️ Không tạo được mã QR lúc này. Vui lòng thử lại sau.')
@@ -904,12 +900,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update,context): log.exception('Unhandled error',exc_info=context.error)
 
 def main():
-    if not BOT_TOKEN:
-        raise SystemExit('THIEU BOT_TOKEN: vao Railway > Service > Variables, them BOT_TOKEN = token lay tu @BotFather, sau do Deploy lai. Co the dung TELEGRAM_BOT_TOKEN thay the.')
-    if not DATABASE_URL:
-        raise SystemExit('THIEU DATABASE_URL: vao Railway > Service > Variables va them DATABASE_URL (PostgreSQL connection string).')
-    if not ADMIN_IDS:
-        raise SystemExit('THIEU ADMIN_IDS: vao Railway > Service > Variables va them ADMIN_IDS = Telegram ID so cua admin.')
+    if not BOT_TOKEN: raise SystemExit('Thiếu BOT_TOKEN trong .env')
+    if not DATABASE_URL: raise SystemExit('Thiếu DATABASE_URL trong .env')
+    if not ADMIN_IDS: raise SystemExit('Thiếu ADMIN_IDS trong .env')
     try:
         init_db()
         log.info('Database schema initialized')
