@@ -34,6 +34,8 @@ QR_TEMPLATE = os.getenv('QR_TEMPLATE', 'compact').strip()
 QR_SHOWINFO = os.getenv('QR_SHOWINFO', 'false').strip().lower()
 QR_MEMO_PREFIX = 'SEVQR'  # VietinBank requires SEVQR in the transfer description.
 QR_MEMO_SUFFIX = os.getenv('QR_MEMO_SUFFIX', 'NAP').strip().upper() or 'NAP'
+# Telegram custom emoji supplied by the bot owner. Rendered in HTML-capable menu messages.
+BOT_CUSTOM_EMOJI = '<tg-emoji emoji-id="6168207816042487487">✨</tg-emoji>'
 DB_POOL = None
 logging.basicConfig(format='%(asctime)s | %(levelname)s | %(name)s | %(message)s', level=LOG_LEVEL)
 log = logging.getLogger('key_shop_bot')
@@ -200,13 +202,13 @@ def init_db():
 
 def user_menu_text(user, balance):
     name = escape(user.full_name or 'Khách hàng')
-    return (f'🎉 Xin chào, {name}!\n🛍 CHÀO MỪNG BẠN ĐẾN VỚI SHOP\n\n'
+    return (f'{BOT_CUSTOM_EMOJI} 🎉 Xin chào, {name}!\n🛍 CHÀO MỪNG BẠN ĐẾN VỚI SHOP\n\n'
             f'━━━━━━━━━━━━━━━━━━\n👤 Tên: {name}\n🆔 ID: {user.id}\n'
             f'📛 Username: @{escape(user.username) if user.username else "Không có"}\n'
             f'💰 Số dư: {balance:,}đ\n━━━━━━━━━━━━━━━━━━\n\n'
             f'👇 Chọn chức năng bên dưới:')
 
-def admin_menu_text(): return '🛠 QUẢN TRỊ SHOP\nChọn chức năng bên dưới:'
+def admin_menu_text(): return f'{BOT_CUSTOM_EMOJI} 🛠 QUẢN TRỊ SHOP\nChọn chức năng bên dưới:'
 
 def maintenance_enabled():
     with db() as con:
@@ -267,7 +269,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_cmd(update, context):
     if not is_admin(update): await update.message.reply_text('⛔ Không có quyền admin.', reply_markup=USER_KB); return
-    context.user_data.clear(); await update.message.reply_text(admin_menu_text(), reply_markup=ADMIN_KB)
+    context.user_data.clear(); await update.message.reply_text(admin_menu_text(), reply_markup=ADMIN_KB, parse_mode='HTML')
 
 async def show_shop(message, edit=False):
     cats = get_categories()
@@ -510,7 +512,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: await show_confirm(q,int(oid),int(qty),context)
     elif data=='shop:confirm': await do_purchase(q,update,context)
     elif data=='shop:cancel': context.user_data.pop('pending_purchase',None); await q.edit_message_text('Đã hủy đơn mua hàng.',reply_markup=inline_back('shop:home'))
-    elif data=='adm:menu': await q.edit_message_text(admin_menu_text(),reply_markup=ADMIN_KB)
+    elif data=='adm:menu': await q.edit_message_text(admin_menu_text(),reply_markup=ADMIN_KB,parse_mode='HTML')
     elif data=='adm:emoji':
         try:
             sticker_set = await context.bot.get_sticker_set(name='NewsEmoji')
