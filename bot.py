@@ -616,7 +616,47 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         oid=int(data.split(':')[2]); context.user_data.update(flow='edit_option_price',edit_option_id=oid)
         await q.message.reply_text('Nhập giá mới bằng số VNĐ (ví dụ 50000):')
     elif data=='adm:delproduct':
-        await q.edit_message_text('Chọn phần cần xóa:',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📁 Xóa danh mục ngoài',callback_data='adm:delcat')],[InlineKeyboardButton('📦 Xóa sản phẩm trong',callback_data='adm:delinner')],[InlineKeyboardButton('↩️ Quay lại',callback_data='adm:menu')]]))
+        await q.edit_message_text('Chọn phần cần xóa:',reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton('📁 Xóa danh mục ngoài',callback_data='adm:delcat')],
+            [InlineKeyboardButton('📦 Xóa sản phẩm trong',callback_data='adm:delinner')],
+            [InlineKeyboardButton('⏳ Xóa gói thời hạn (1 giờ / 1 ngày / 7 ngày / 30 ngày)',callback_data='adm:deloption')],
+            [InlineKeyboardButton('↩️ Quay lại',callback_data='adm:menu')]
+        ]))
+    elif data=='adm:deloption':
+        cats=get_categories()
+        await q.edit_message_text('Chọn danh mục chứa gói cần xóa:',reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton(c['name'],callback_data=f"adm:deloptioncat:{c['id']}")] for c in cats]+
+            [[InlineKeyboardButton('↩️ Quay lại',callback_data='adm:delproduct')]]))
+    elif data.startswith('adm:deloptioncat:'):
+        cid=int(data.split(':')[2]); ps=get_products(cid)
+        await q.edit_message_text('Chọn sản phẩm:',reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton(p['name'],callback_data=f"adm:deloptionprod:{p['id']}")] for p in ps]+
+            [[InlineKeyboardButton('↩️ Quay lại',callback_data='adm:deloption')]]))
+    elif data.startswith('adm:deloptionprod:'):
+        pid=int(data.split(':')[2])
+        with db() as con:
+            prod=con.execute('SELECT name FROM products WHERE id=?',(pid,)).fetchone()
+            opts=con.execute('SELECT id,duration_label,price FROM product_options WHERE product_id::text=?::text ORDER BY id',(pid,)).fetchall()
+        if not prod:
+            await q.edit_message_text('Sản phẩm không còn tồn tại.',reply_markup=ADMIN_KB); return
+        rows=[[InlineKeyboardButton(f"{o['duration_label']} · {o['price']:,}đ",callback_data=f"adm:deloptionconfirm:{o['id']}")] for o in opts]
+        rows.append([InlineKeyboardButton('↩️ Quay lại',callback_data='adm:deloption')])
+        await q.edit_message_text(f"Chọn gói thời hạn của {prod['name']} muốn xóa:",reply_markup=InlineKeyboardMarkup(rows))
+    elif data.startswith('adm:deloptionconfirm:'):
+        oid=int(data.split(':')[2])
+        with db() as con:
+            opt=con.execute('SELECT duration_label,price,product_id FROM product_options WHERE id=?',(oid,)).fetchone()
+            if not opt:
+                await q.edit_message_text('Gói này không còn tồn tại.',reply_markup=ADMIN_KB); return
+            prod=con.execute('SELECT name FROM products WHERE id::text=?::text',(str(opt['product_id']),)).fetchone()
+        context.user_data['delete_target']=('option',oid)
+        await q.edit_message_text(
+            f"Xác nhận xóa gói {prod['name'] if prod else ''} · {opt['duration_label']} · {opt['price']:,}đ?\n"
+            'Các key thuộc gói này cũng sẽ bị xóa khỏi kho. Lịch sử đơn hàng đã phát sinh vẫn được giữ.',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('⚠️ XÁC NHẬN XÓA',callback_data='adm:deleteconfirm')],
+                [InlineKeyboardButton('Hủy',callback_data='adm:delproduct')]
+            ]))
     elif data=='adm:delcat':
         cats=get_categories(); await q.edit_message_text('Chọn danh mục ngoài cần xóa:',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(c['name'],callback_data=f"adm:delcatconfirm:{c['id']}")] for c in cats]+[[InlineKeyboardButton('↩️ Quay lại',callback_data='adm:menu')]]))
     elif data.startswith('adm:delcatconfirm:'):
@@ -630,7 +670,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data=='adm:deleteconfirm':
         target=context.user_data.pop('delete_target',None)
         if target:
-            with db() as con: con.execute('DELETE FROM categories WHERE id=?',(target[1],)) if target[0]=='category' else con.execute('DELETE FROM products WHERE id=?',(target[1],))
+            with db() as con:
+                if target[0]=='category':
+                    con.execute('DELETE FROM categories WHERE id=?',(target[1],))
+                elif target[0]=='product':
+                    con.execute('DELETE FROM products WHERE id=?',(target[1],))
+                elif target[0]=='option':
+                    con.execute('DELETE FROM product_options WHERE id=?',(target[1],))
         await q.edit_message_text('✅ Đã xóa thành công.',reply_markup=ADMIN_KB)
     elif data=='adm:addkeys':
         cats=get_categories(); await q.edit_message_text('Chọn danh mục:',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(c['name'],callback_data=f"adm:keycat:{c['id']}")] for c in cats]+[[InlineKeyboardButton('↩️ Quay lại',callback_data='adm:menu')]]))
