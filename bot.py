@@ -2,6 +2,9 @@ import os
 import re
 import asyncio
 import logging
+import json
+import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from html import escape
@@ -23,6 +26,8 @@ from telegram.ext import (
 
 DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
 BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
+SHOPHENRY_API_TOKEN = os.getenv('SHOPHENRY_API_TOKEN', '').strip()
+SHOPHENRY_API_URL = os.getenv('SHOPHENRY_API_URL', 'https://shophenry.io.vn/api/seller.php').strip()
 ADMIN_IDS = {int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip().isdigit()}
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
 QR_BANK = os.getenv('QR_BANK', 'VietinBank').strip()
@@ -42,6 +47,7 @@ ADMIN_KB = InlineKeyboardMarkup([
     [InlineKeyboardButton('📢 Thông báo', callback_data='adm:broadcast')],
     [InlineKeyboardButton('👤 Thông tin người dùng', callback_data='adm:usercheck')],
     [InlineKeyboardButton('➕ Thêm sản phẩm', callback_data='adm:addproduct')],
+    [InlineKeyboardButton('🔗 Gán ID ShopHenry cho gói sản phẩm', callback_data='adm:mapshop')],
     [InlineKeyboardButton('✏️ Sửa giá / thời hạn', callback_data='adm:editproduct')],
     [InlineKeyboardButton('📋 Chi tiết sản phẩm', callback_data='adm:detailproduct')],
     [InlineKeyboardButton('📝 Đổi tên danh mục ngoài', callback_data='adm:renamecat')],
@@ -120,6 +126,7 @@ def init_db():
             balance BIGINT NOT NULL DEFAULT 0, is_locked BOOLEAN NOT NULL DEFAULT FALSE,
             joined_at TEXT NOT NULL, last_seen TEXT NOT NULL)""",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_deposit_request_at TIMESTAMPTZ",
+        "ALTER TABLE product_options ADD COLUMN IF NOT EXISTS shophenry_product_id TEXT",
         "CREATE TABLE IF NOT EXISTS bot_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_at TEXT NOT NULL)",
         "INSERT INTO bot_settings(setting_key,setting_value,updated_at) VALUES('maintenance','off',NOW()::text) ON CONFLICT(setting_key) DO NOTHING",
         """CREATE TABLE IF NOT EXISTS categories (
@@ -235,6 +242,11 @@ def get_categories():
 def get_products(category_id):
     with db() as con: return con.execute('SELECT id,name FROM products WHERE category_id::text=?::text ORDER BY id', (category_id,)).fetchall()
 
+def get_product_category_id(product_id):
+    with db() as con:
+        row=con.execute('SELECT category_id FROM products WHERE id=?',(product_id,)).fetchone()
+    return row['category_id'] if row else 0
+
 def stock_for_option(option_id):
     with db() as con: return con.execute("SELECT COUNT(*) AS n FROM product_keys WHERE option_id=? AND status='available'", (option_id,)).fetchone()['n']
 
@@ -294,8 +306,8 @@ async def show_category(q, category_id):
     if not cat: await q.edit_message_text('Danh mục không còn tồn tại.'); return
     rows = []
     for o in opts:
-        stock = stock_for_option(o['id'])
-        btn_text = f"✨ {o['product_name']} ({o['duration_label']}) – {o['price']:,}đ (Kho: {stock})"
+        stock_label = 'ShopHenry' if o.get('shophenry_product_id') else f"{stock_for_option(o['id'])}"
+        btn_text = f"✨ {o['product_name']} ({o['duration_label']}) – {o['price']:,}đ (Nguồn: {stock_label})"
         rows.append([InlineKeyboardButton(btn_text, callback_data=f"shop:option:{o['id']}")])
     rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
     
@@ -318,7 +330,7 @@ async def show_quantity(q, option_id, context):
     ]
     await q.edit_message_text(
         f"🛒 {escape(o['product_name'])}\n⏳ {escape(o['duration_label'])}"
-        f"\n💵 Giá: {o['price']:,}đ / key\n📦 Kho còn: {stock_for_option(option_id)}"
+        f"\n💵 Giá: {o['price']:,}đ / key\n📦 Nguồn hàng: {'ShopHenry' if o.get('shophenry_product_id') else f'Kho nội bộ ({stock_for_option(option_id)})'}"
         f"\n\n🔑 Chọn số lượng Key muốn mua để tiến hành thanh toán:",
         reply_markup=InlineKeyboardMarkup(buttons),parse_mode='HTML')
 
@@ -330,37 +342,111 @@ async def show_confirm(q, option_id, qty, context):
     context.user_data.update(pending_purchase={'option_id':option_id,'quantity':qty,'total':total})
     await q.edit_message_text(f"🧾 XÁC NHẬN MUA HÀNG\n\n📁 Danh mục: {escape(o['category_name'])}\n📦 Sản phẩm: {escape(o['product_name'])}\n⏳ Thời hạn: {escape(o['duration_label'])}\n🔢 Số lượng: {qty}\n💰 Tổng tiền: {total:,}đ\n\nBạn xác nhận mua chứ?",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('✅ XÁC NHẬN MUA',callback_data='shop:confirm')],[InlineKeyboardButton('❌ HỦY',callback_data='shop:cancel')]]),parse_mode='HTML')
 
+def shophenry_buy(product_id, quantity):
+    """Call ShopHenry once. Never auto-retry a purchase because it may charge twice."""
+    if not SHOPHENRY_API_TOKEN:
+        raise RuntimeError('Thiếu SHOPHENRY_API_TOKEN trong biến môi trường.')
+    url = SHOPHENRY_API_URL + ('&' if '?' in SHOPHENRY_API_URL else '?') + 'action=buy'
+    body = json.dumps({'product_id': int(product_id), 'quantity': int(quantity)}).encode('utf-8')
+    req = urllib.request.Request(
+        url, data=body, method='POST',
+        headers={
+            'Authorization': f'Bearer {SHOPHENRY_API_TOKEN}',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            payload = json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode('utf-8', errors='replace')[:1000]
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            raise RuntimeError(f'ShopHenry trả HTTP {exc.code}.')
+        if not payload.get('success'):
+            raise RuntimeError(str(payload.get('message') or f'ShopHenry từ chối đơn (HTTP {exc.code}).'))
+    if not isinstance(payload, dict) or not payload.get('success'):
+        message = payload.get('message', 'ShopHenry không xác nhận đơn hàng.') if isinstance(payload, dict) else 'Phản hồi ShopHenry không hợp lệ.'
+        raise RuntimeError(str(message))
+    data = payload.get('data') or {}
+    raw_keys = data.get('keys') or data.get('key')
+    if isinstance(raw_keys, list):
+        keys = [str(x).strip() for x in raw_keys if str(x).strip()]
+    elif isinstance(raw_keys, str):
+        keys = [line.strip() for line in raw_keys.replace('\r', '').split('\n') if line.strip()]
+        if len(keys) == 1 and quantity > 1 and ' | ' in keys[0]:
+            keys = [x.strip() for x in keys[0].split(' | ') if x.strip()]
+    else:
+        keys = []
+    order_code = str(data.get('order_code') or '')
+    if len(keys) != int(quantity):
+        raise RuntimeError(
+            'ShopHenry đã báo thành công nhưng số key trả về không khớp số lượng. '
+            + (f'Mã đơn: {order_code}. ' if order_code else '')
+            + 'Bot chưa trừ tiền khách; admin cần kiểm tra đơn ShopHenry trước khi cho mua lại.'
+        )
+    return '\n'.join(keys), order_code
+
+
 async def do_purchase(q, update, context):
     pending=context.user_data.get('pending_purchase')
-    if not pending: await q.edit_message_text('Phiên mua hàng đã hết. Hãy mở cửa hàng lại.'); return
+    if not pending:
+        await q.edit_message_text('Phiên mua hàng đã hết. Hãy mở cửa hàng lại.')
+        return
     uid=update.effective_user.id; oid=pending['option_id']; qty=pending['quantity']
     con=db()
     try:
         con.execute('BEGIN')
         user=con.execute('SELECT balance,is_locked FROM users WHERE user_id=? FOR UPDATE',(uid,)).fetchone()
-        opt=con.execute('SELECT po.*,p.name AS product_name,p.category_id,c.name AS category_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=?',(oid,)).fetchone()
+        opt=con.execute('''SELECT po.*,p.name AS product_name,p.category_id,
+            c.name AS category_name FROM product_options po
+            JOIN products p ON p.id::text=po.product_id::text
+            JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=?''',(oid,)).fetchone()
         if not user or user['is_locked']:
             con.rollback(); await q.edit_message_text('⛔ Tài khoản không thể mua hàng.'); return
         if not opt:
             con.rollback(); await q.edit_message_text('Sản phẩm không còn tồn tại.'); return
-        keys=con.execute("SELECT id,key_value FROM product_keys WHERE option_id=? AND status='available' ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED",(oid,qty)).fetchall()
-        if len(keys)<qty:
-            con.rollback(); await q.edit_message_text(f"❌ Kho không đủ key. Hiện còn {len(keys)} key."); return
         total=opt['price']*qty
         if user['balance']<total:
             con.rollback(); await q.edit_message_text(f"❌ Số dư không đủ.\nCần: {total:,}đ\nHiện có: {user['balance']:,}đ"); return
-        stamp=now(); key_text='\n'.join(k['key_value'] for k in keys)
+        supplier_order=''
+        if opt['shophenry_product_id']:
+            # Call supplier while this user's balance row is locked, preventing parallel double purchases.
+            try:
+                key_text, supplier_order = await asyncio.to_thread(
+                    shophenry_buy, opt['shophenry_product_id'], qty
+                )
+                keys=[]
+            except Exception as api_error:
+                con.rollback()
+                log.warning('ShopHenry purchase failed for user=%s product=%s: %s', uid, opt['shophenry_product_id'], api_error)
+                await q.edit_message_text('❌ Không thể hoàn tất đơn ShopHenry.\n' + str(api_error)[:700] + '\n\nBot chưa trừ số dư của bạn. Nếu ShopHenry đã tạo đơn, admin cần kiểm tra mã đơn trước khi thử lại.')
+                return
+        else:
+            # Preserve the bot's original local-key inventory for products not connected to ShopHenry.
+            keys=con.execute("SELECT id,key_value FROM product_keys WHERE option_id=? AND status='available' ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED",(oid,qty)).fetchall()
+            if len(keys)<qty:
+                con.rollback(); await q.edit_message_text(f"❌ Kho không đủ key. Hiện còn {len(keys)} key."); return
+            key_text='\n'.join(k['key_value'] for k in keys)
+        stamp=now()
         con.execute('UPDATE users SET balance=balance-? WHERE user_id=?',(total,uid))
-        for k in keys: con.execute("UPDATE product_keys SET status='sold',sold_to=?,sold_at=? WHERE id=?",(uid,stamp,k['id']))
+        for k in keys:
+            con.execute("UPDATE product_keys SET status='sold',sold_to=?,sold_at=? WHERE id=?",(uid,stamp,k['id']))
         con.execute('INSERT INTO purchases(user_id,category_name,product_name,duration_label,quantity,unit_price,total_price,keys_text,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
                     (uid,opt['category_name'],opt['product_name'],opt['duration_label'],qty,opt['price'],total,key_text,stamp))
         con.commit()
     except Exception:
-        con.rollback(); log.exception('Purchase failed'); await q.message.reply_text('Có lỗi khi xử lý đơn hàng.'); return
-    finally: con.close()
+        con.rollback(); log.exception('Purchase failed after ShopHenry request')
+        await q.message.reply_text('⚠️ Có lỗi khi ghi nhận đơn sau khi gọi ShopHenry. Không bấm mua lại; hãy gửi mã đơn cho admin kiểm tra.')
+        return
+    finally:
+        con.close()
     context.user_data.pop('pending_purchase',None)
     await q.edit_message_text(
-        f"🎉 MUA HÀNG THÀNH CÔNG! 🎉\n\n📦 Sản phẩm: {escape(opt['product_name'])} - {escape(opt['duration_label'])}\n🔢 Số lượng: {qty}\n💰 Tổng tiền: {total:,}đ",
+        f"🎉 MUA HÀNG THÀNH CÔNG! 🎉\n\n📦 Sản phẩm: {escape(opt['product_name'])} - {escape(opt['duration_label'])}\n🔢 Số lượng: {qty}\n💰 Tổng tiền: {total:,}đ"
+        + (f"\n🧾 Mã đơn ShopHenry: {escape(supplier_order)}" if supplier_order else ''),
         parse_mode='HTML', reply_markup=inline_back('menu:home'))
     await q.message.reply_text('🔑 KEY CỦA BẠN:', reply_markup=USER_KB)
     key_lines=key_text.splitlines()
@@ -554,6 +640,25 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data=='adm:usercheck': context.user_data['flow']='user_check_id'; await q.message.reply_text('Nhập Telegram ID hoặc @username cần kiểm tra:')
     elif data=='adm:addproduct': await q.edit_message_text('Chọn loại sản phẩm muốn thêm:',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📁 Sản phẩm ngoài (danh mục)',callback_data='adm:addcat')],[InlineKeyboardButton('📦 Sản phẩm trong (sản phẩm)',callback_data='adm:addinner')],[InlineKeyboardButton('↩️ Quay lại',callback_data='adm:menu')]]))
     elif data=='adm:addcat': context.user_data['flow']='add_category_name'; await q.message.reply_text('Nhập tên danh mục ngoài:')
+    elif data=='adm:mapshop':
+        cats=get_categories()
+        if not cats:
+            await q.message.reply_text('Chưa có danh mục sản phẩm.'); return
+        await q.edit_message_text('Chọn danh mục chứa sản phẩm cần gán ID ShopHenry:',reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton(c['name'],callback_data='adm:mapshopcat:{}'.format(c['id']))] for c in cats]+[[InlineKeyboardButton('↩️ Quay lại',callback_data='adm:menu')]]))
+    elif data.startswith('adm:mapshopcat:'):
+        cid=int(data.split(':')[2]); ps=get_products(cid)
+        await q.edit_message_text('Chọn sản phẩm cần gán ID ShopHenry:',reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton(p['name'],callback_data='adm:mapshopprod:{}'.format(p['id']))] for p in ps]+[[InlineKeyboardButton('↩️ Quay lại',callback_data='adm:mapshop')]]))
+    elif data.startswith('adm:mapshopprod:'):
+        pid=int(data.split(':')[2])
+        with db() as con: options=con.execute('SELECT id,duration_label,shophenry_product_id FROM product_options WHERE product_id=? ORDER BY id',(pid,)).fetchall()
+        await q.edit_message_text('Chọn gói thời hạn cần gán ID ShopHenry:',reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton(f"{o['duration_label']} · ID: {o['shophenry_product_id'] or 'Chưa gán'}",callback_data=f"adm:mapshopopt:{o['id']}")] for o in options]+[[InlineKeyboardButton('↩️ Quay lại',callback_data=f'adm:mapshopcat:{get_product_category_id(pid)}')]]))
+    elif data.startswith('adm:mapshopopt:'):
+        oid=int(data.split(':')[2])
+        context.user_data.update(flow='map_shophenry_id',shophenry_target_option=oid)
+        await q.message.reply_text('Nhập product_id của đúng gói thời hạn này trên ShopHenry (chỉ nhập ID dạng số):')
     elif data=='adm:addinner':
         cats=get_categories()
         if not cats: await q.message.reply_text('Chưa có danh mục ngoài. Hãy thêm danh mục trước.'); return
@@ -616,47 +721,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         oid=int(data.split(':')[2]); context.user_data.update(flow='edit_option_price',edit_option_id=oid)
         await q.message.reply_text('Nhập giá mới bằng số VNĐ (ví dụ 50000):')
     elif data=='adm:delproduct':
-        await q.edit_message_text('Chọn phần cần xóa:',reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton('📁 Xóa danh mục ngoài',callback_data='adm:delcat')],
-            [InlineKeyboardButton('📦 Xóa sản phẩm trong',callback_data='adm:delinner')],
-            [InlineKeyboardButton('⏳ Xóa gói thời hạn (1 giờ / 1 ngày / 7 ngày / 30 ngày)',callback_data='adm:deloption')],
-            [InlineKeyboardButton('↩️ Quay lại',callback_data='adm:menu')]
-        ]))
-    elif data=='adm:deloption':
-        cats=get_categories()
-        await q.edit_message_text('Chọn danh mục chứa gói cần xóa:',reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton(c['name'],callback_data=f"adm:deloptioncat:{c['id']}")] for c in cats]+
-            [[InlineKeyboardButton('↩️ Quay lại',callback_data='adm:delproduct')]]))
-    elif data.startswith('adm:deloptioncat:'):
-        cid=int(data.split(':')[2]); ps=get_products(cid)
-        await q.edit_message_text('Chọn sản phẩm:',reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton(p['name'],callback_data=f"adm:deloptionprod:{p['id']}")] for p in ps]+
-            [[InlineKeyboardButton('↩️ Quay lại',callback_data='adm:deloption')]]))
-    elif data.startswith('adm:deloptionprod:'):
-        pid=int(data.split(':')[2])
-        with db() as con:
-            prod=con.execute('SELECT name FROM products WHERE id=?',(pid,)).fetchone()
-            opts=con.execute('SELECT id,duration_label,price FROM product_options WHERE product_id::text=?::text ORDER BY id',(pid,)).fetchall()
-        if not prod:
-            await q.edit_message_text('Sản phẩm không còn tồn tại.',reply_markup=ADMIN_KB); return
-        rows=[[InlineKeyboardButton(f"{o['duration_label']} · {o['price']:,}đ",callback_data=f"adm:deloptionconfirm:{o['id']}")] for o in opts]
-        rows.append([InlineKeyboardButton('↩️ Quay lại',callback_data='adm:deloption')])
-        await q.edit_message_text(f"Chọn gói thời hạn của {prod['name']} muốn xóa:",reply_markup=InlineKeyboardMarkup(rows))
-    elif data.startswith('adm:deloptionconfirm:'):
-        oid=int(data.split(':')[2])
-        with db() as con:
-            opt=con.execute('SELECT duration_label,price,product_id FROM product_options WHERE id=?',(oid,)).fetchone()
-            if not opt:
-                await q.edit_message_text('Gói này không còn tồn tại.',reply_markup=ADMIN_KB); return
-            prod=con.execute('SELECT name FROM products WHERE id::text=?::text',(str(opt['product_id']),)).fetchone()
-        context.user_data['delete_target']=('option',oid)
-        await q.edit_message_text(
-            f"Xác nhận xóa gói {prod['name'] if prod else ''} · {opt['duration_label']} · {opt['price']:,}đ?\n"
-            'Các key thuộc gói này cũng sẽ bị xóa khỏi kho. Lịch sử đơn hàng đã phát sinh vẫn được giữ.',
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton('⚠️ XÁC NHẬN XÓA',callback_data='adm:deleteconfirm')],
-                [InlineKeyboardButton('Hủy',callback_data='adm:delproduct')]
-            ]))
+        await q.edit_message_text('Chọn phần cần xóa:',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📁 Xóa danh mục ngoài',callback_data='adm:delcat')],[InlineKeyboardButton('📦 Xóa sản phẩm trong',callback_data='adm:delinner')],[InlineKeyboardButton('↩️ Quay lại',callback_data='adm:menu')]]))
     elif data=='adm:delcat':
         cats=get_categories(); await q.edit_message_text('Chọn danh mục ngoài cần xóa:',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(c['name'],callback_data=f"adm:delcatconfirm:{c['id']}")] for c in cats]+[[InlineKeyboardButton('↩️ Quay lại',callback_data='adm:menu')]]))
     elif data.startswith('adm:delcatconfirm:'):
@@ -670,13 +735,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data=='adm:deleteconfirm':
         target=context.user_data.pop('delete_target',None)
         if target:
-            with db() as con:
-                if target[0]=='category':
-                    con.execute('DELETE FROM categories WHERE id=?',(target[1],))
-                elif target[0]=='product':
-                    con.execute('DELETE FROM products WHERE id=?',(target[1],))
-                elif target[0]=='option':
-                    con.execute('DELETE FROM product_options WHERE id=?',(target[1],))
+            with db() as con: con.execute('DELETE FROM categories WHERE id=?',(target[1],)) if target[0]=='category' else con.execute('DELETE FROM products WHERE id=?',(target[1],))
         await q.edit_message_text('✅ Đã xóa thành công.',reply_markup=ADMIN_KB)
     elif data=='adm:addkeys':
         cats=get_categories(); await q.edit_message_text('Chọn danh mục:',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(c['name'],callback_data=f"adm:keycat:{c['id']}")] for c in cats]+[[InlineKeyboardButton('↩️ Quay lại',callback_data='adm:menu')]]))
@@ -838,9 +897,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 con.execute('UPDATE users SET last_deposit_request_at=? WHERE user_id=?',(datetime.now(timezone.utc),uid))
             context.user_data['flow']=None
             qr_url=make_qr_url(amount,memo)
-            caption=(f'<tg-emoji emoji-id="6168207816042487487">✨</tg-emoji> THÔNG TIN NẠP TIỀN\n\n<tg-emoji emoji-id="6168207816042487487">✨</tg-emoji> Mã đơn: #{deposit_id}\n<tg-emoji emoji-id="6168207816042487487">✨</tg-emoji> Số tiền: {amount:,}đ\n<tg-emoji emoji-id="6168207816042487487">✨</tg-emoji> Ngân hàng: {QR_BANK}\n<tg-emoji emoji-id="6168207816042487487">✨</tg-emoji> Nội dung chuyển khoản: {memo}\n\nQuét mã QR để chuyển khoản đúng số tiền và nội dung. Sau khi chuyển xong, bấm “Đã chuyển tiền”.')
+            caption=(f'💳 THÔNG TIN NẠP TIỀN\n\n🧾 Mã đơn: #{deposit_id}\n💰 Số tiền: {amount:,}đ\n🏦 Ngân hàng: {QR_BANK}\n📝 Nội dung chuyển khoản: {memo}\n\nQuét mã QR để chuyển khoản đúng số tiền và nội dung. Sau khi chuyển xong, bấm “Đã chuyển tiền”.')
             kb=InlineKeyboardMarkup([[InlineKeyboardButton('✅ Đã chuyển tiền',callback_data=f'deposit:submitted:{deposit_id}')],[InlineKeyboardButton('❌ Hủy',callback_data=f'deposit:cancel:{deposit_id}')]])
-            await msg.reply_photo(photo=qr_url,caption=caption,reply_markup=kb,parse_mode='HTML')
+            await msg.reply_photo(photo=qr_url,caption=caption,reply_markup=kb)
         except Exception:
             log.exception('Create deposit request failed')
             await msg.reply_text('⚠️ Không tạo được mã QR lúc này. Vui lòng thử lại sau.')
@@ -896,19 +955,29 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cid=context.user_data.get('new_product_category')
         if not cid:
             await msg.reply_text('⚠️ Bạn chưa chọn danh mục. Vui lòng bấm /admin để thực hiện lại.', reply_markup=ADMIN_KB)
-            context.user_data.clear()
-            return
+            context.user_data.clear(); return
+        if not text or len(text)>100:
+            await msg.reply_text('Tên sản phẩm không hợp lệ. Nhập lại (tối đa 100 ký tự):'); return
         try:
             with db() as con:
                 p=con.execute('INSERT INTO products(category_id,name,created_by,created_at) VALUES(?,?,?,?) RETURNING id',(cid,text,user.id,now())).fetchone()
                 con.execute("INSERT INTO product_options(product_id,duration,duration_label,price) VALUES(?,'1h','1 giờ',0),(?,'1d','1 ngày',0),(?,'7d','7 ngày',0),(?,'30d','30 ngày',0)",(p['id'],p['id'],p['id'],p['id']))
-                con.commit()
             context.user_data.clear()
-            await msg.reply_text(f'✅ Thêm sản phẩm "{text}" thành công!\n\nBot đã tạo sẵn 4 gói (1 giờ, 1 ngày, 7 ngày và 30 ngày).\nBấm /admin để sửa giá hoặc thêm key.', reply_markup=ADMIN_KB)
-        except Exception as e:
-            log.exception("Add product failed")
-            context.user_data.clear()
-            await msg.reply_text(f'❌ Lỗi khi thêm sản phẩm: {e}', reply_markup=ADMIN_KB)
+            await msg.reply_text(f'✅ Thêm sản phẩm "{text}" thành công!\n\nĐã tạo 4 gói thời hạn. Tiếp theo vào /admin → Gán ID ShopHenry cho sản phẩm cũ → chọn sản phẩm → gán ID riêng cho từng gói thời hạn. Sau đó vào Sửa giá / thời hạn để đặt giá bán.', reply_markup=ADMIN_KB)
+        except Exception:
+            log.exception('Add product failed')
+            context.user_data.clear(); await msg.reply_text('❌ Không thể thêm sản phẩm. Kiểm tra Logs.',reply_markup=ADMIN_KB)
+        return
+    if flow=='map_shophenry_id' and is_admin(update):
+        if not text.isdigit():
+            await msg.reply_text('ID ShopHenry phải là số. Nhập lại product_id:'); return
+        oid=context.user_data.get('shophenry_target_option')
+        try:
+            with db() as con: con.execute('UPDATE product_options SET shophenry_product_id=? WHERE id=?',(text,oid))
+            context.user_data.clear(); await msg.reply_text(f'✅ Đã gán ID ShopHenry {text} cho gói sản phẩm.',reply_markup=ADMIN_KB)
+        except Exception:
+            log.exception('Map ShopHenry option failed'); context.user_data.clear()
+            await msg.reply_text('❌ Không thể gán ID ShopHenry. Kiểm tra Logs.',reply_markup=ADMIN_KB)
         return
     if flow=='broadcast' and is_admin(update):
         context.user_data.clear(); n=await broadcast(context.bot,'📢 THÔNG BÁO TỪ SHOP\n\n'+text); await msg.reply_text(f'✅ Đã gửi thông báo tới {n} người dùng.',reply_markup=ADMIN_KB); return
