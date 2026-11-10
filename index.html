@@ -329,10 +329,24 @@
             <div class="admin-title">QUẢN TRỊ ADMIN (HỆ THỐNG)</div>
             <p class="deposit-desc">Bảng điều khiển quản lý trực tiếp từ bot.py.</p>
             <div class="admin-grid">
-                <button class="admin-action-btn" onclick="adminAddKeyFlow()">+ Thêm Key Mới</button>
-                <button class="admin-action-btn" onclick="openAdminCategoryModal()">📁 Quản lý & Thêm Ảnh Mục</button>
-                <button class="admin-action-btn" onclick="adminAction('stats')">📊 Thống Kê Doanh Thu</button>
                 <button class="admin-action-btn" onclick="adminAction('broadcast')">📢 Gửi Thông Báo</button>
+                <button class="admin-action-btn" onclick="adminAction('stats')">📊 Thống Kê Hệ Thống</button>
+                <button class="admin-action-btn" onclick="adminAction('usercheck')">👤 Quản Lý Người Dùng</button>
+                <button class="admin-action-btn" onclick="adminAction('add_category')">📁 Thêm Danh Mục</button>
+                <button class="admin-action-btn" onclick="adminAction('add_product')">➕ Thêm Sản Phẩm</button>
+                <button class="admin-action-btn" onclick="adminAction('add_guide')">🔗 Link Cách Cài</button>
+                <button class="admin-action-btn" onclick="adminAction('map_shop')">🔗 Gán ID ShopHenry</button>
+                <button class="admin-action-btn" onclick="adminAction('edit_price')">✏️ Sửa Giá Thường</button>
+                <button class="admin-action-btn" onclick="adminAction('edit_sell_price')">💰 Sửa Giá Sell</button>
+                <button class="admin-action-btn" onclick="adminAction('detail_product')">📋 Chi Tiết Sản Phẩm</button>
+                <button class="admin-action-btn" onclick="adminAction('rename_category')">📝 Đổi Tên Danh Mục</button>
+                <button class="admin-action-btn" onclick="adminAction('delete_category')">🗑 Xóa Danh Mục</button>
+                <button class="admin-action-btn" onclick="adminAction('delete_product')">🗑 Xóa Sản Phẩm</button>
+                <button class="admin-action-btn" onclick="adminAddKeyFlow()">🔑 Thêm Key Sản Phẩm</button>
+                <button class="admin-action-btn" onclick="adminAction('stock')">📦 Kiểm Tra Kho</button>
+                <button class="admin-action-btn" onclick="adminAction('maintenance')">🛠 Bật / Tắt Bảo Trì</button>
+                <button class="admin-action-btn" onclick="adminAction('emoji')">✨ Kho Emoji NewsEmoji</button>
+                <button class="admin-action-btn" onclick="openAdminCategoryModal()">🖼 Quản Lý Ảnh Mục</button>
             </div>
         </div>
 
@@ -681,8 +695,84 @@
             }
         }
 
-        function adminAddKeyFlow() {
-            openCategoryModal('admin_add_key_cat');
+        async function adminApi(action, fields = {}) {
+            return await apiRequest('/api/admin/action', {method:'POST', body:JSON.stringify({action, ...fields})});
+        }
+        async function adminOverview() { return await apiRequest('/api/admin/overview'); }
+        function adminAsk(label, example='') {
+            const value = prompt(label + (example ? '\nVí dụ: ' + example : ''));
+            return value === null ? null : value.trim();
+        }
+        function adminMoney(v) { return Number(v || 0).toLocaleString('vi-VN') + 'đ'; }
+        async function adminUserActions(uid, userData) {
+            const choice = prompt(
+                `NGƯỜI DÙNG ${uid}\nTên: ${userData.full_name || 'Không có'}\nSố dư: ${adminMoney(userData.balance)}\nTrạng thái: ${userData.is_locked ? 'Đã khóa' : 'Hoạt động'}\nSell: ${userData.is_seller ? 'Có' : 'Không'}\n\nNhập thao tác:\n1 Khóa tài khoản\n2 Mở khóa tài khoản\n3 Cộng số dư\n4 Trừ số dư\n5 Cấp quyền Sell\n6 Gỡ quyền Sell\n7 Lịch sử nạp\n8 Lịch sử mua`);
+            if (!choice) return;
+            const map = {'1':'lock_user','2':'unlock_user','5':'set_sell','6':'remove_sell'};
+            if (map[choice]) {
+                const r = await adminApi(map[choice], {user_id:uid}); tg.showAlert(r.message || 'Đã cập nhật.'); return;
+            }
+            if (choice === '3' || choice === '4') {
+                const amount = Number(adminAsk('Nhập số tiền (VNĐ):','50000'));
+                if (!Number.isSafeInteger(amount) || amount < 1) return tg.showAlert('Số tiền không hợp lệ.');
+                const r = await adminApi(choice === '3' ? 'add_balance' : 'subtract_balance', {user_id:uid, amount});
+                tg.showAlert('Thành công. Số dư mới: ' + adminMoney(r.balance)); return;
+            }
+            if (choice === '7' || choice === '8') {
+                const r = await adminApi('user_history',{user_id:uid,kind:choice==='7'?'deposits':'purchases'});
+                const lines=(r.items||[]).map(x=>choice==='7'?`#${x.id} · ${adminMoney(x.amount)} · ${x.status} · ${x.created_at}`:`#${x.id} ${x.product_name} · ${x.duration_label} · ${x.quantity} key · ${adminMoney(x.total_price)}`);
+                tg.showAlert(lines.join('\n').slice(0,3900) || 'Chưa có lịch sử.');
+            }
+        }
+        async function adminAction(actionType) {
+            try {
+                if (actionType === 'stats') {
+                    const r=await adminApi('stats'); const x=r.stats;
+                    tg.showAlert(`📊 THỐNG KÊ HỆ THỐNG\nNgười dùng: ${Number(x.users).toLocaleString('vi-VN')}\nTổng nạp thành công: ${adminMoney(x.deposits)}\nTổng số dư người dùng: ${adminMoney(x.balances)}\nĐơn mua: ${Number(x.purchases).toLocaleString('vi-VN')}`); return;
+                }
+                if (actionType === 'broadcast') {
+                    const message=adminAsk('Nhập nội dung thông báo gửi đến tất cả người dùng:'); if(!message) return;
+                    if(!confirm('Xác nhận gửi thông báo cho toàn bộ người dùng đang hoạt động?')) return;
+                    const r=await adminApi('broadcast',{message}); tg.showAlert(r.message); return;
+                }
+                if (actionType === 'usercheck') {
+                    const q=adminAsk('Nhập Telegram ID hoặc @username:'); if(!q) return;
+                    const r=await adminApi('usercheck',{query:q}); await adminUserActions(r.user.user_id,r.user); return;
+                }
+                if (actionType === 'maintenance') {
+                    const r=await adminApi('maintenance'); tg.showAlert(r.message); return;
+                }
+                if (actionType === 'emoji') {
+                    const r=await adminApi('emoji'); const list=(r.items||[]).map(x=>x.emoji).join(' ');
+                    tg.showAlert(`Đã tải ${r.items.length} emoji từ NewsEmoji:\n${list}`.slice(0,3900)); return;
+                }
+                const ov=await adminOverview();
+                const cats=(ov.categories||[]).map(x=>`${x.id}: ${x.name}`).join('\n') || 'Chưa có danh mục';
+                const products=(ov.products||[]).map(x=>`${x.id}: ${x.name} (DM ${x.category_id})`).join('\n') || 'Chưa có sản phẩm';
+                const options=(ov.options||[]).map(x=>`${x.id}: ${x.product_name} – ${x.duration_label} (giá ${x.price}, Sell ${x.sell_price})`).join('\n') || 'Chưa có gói';
+                let fields={};
+                if(actionType==='add_category') { fields.name=adminAsk('Tên danh mục mới:'); if(!fields.name)return; }
+                else if(actionType==='add_product') { tg.showAlert('Danh mục hiện có:\n'+cats); fields.category_id=Number(adminAsk('Nhập ID danh mục:')); fields.name=adminAsk('Tên sản phẩm mới:'); if(!fields.category_id||!fields.name)return; }
+                else if(actionType==='add_guide') { tg.showAlert('Danh mục hiện có:\n'+cats); fields.category_id=Number(adminAsk('ID danh mục cần gắn link:')); fields.url=adminAsk('Link hướng dẫn (https://...):'); if(!fields.category_id||!fields.url)return; }
+                else if(actionType==='map_shop') { tg.showAlert('Các gói hiện có:\n'+options); fields.option_id=Number(adminAsk('ID gói sản phẩm:')); fields.shophenry_product_id=adminAsk('ShopHenry product_id:'); if(!fields.option_id||!fields.shophenry_product_id)return; }
+                else if(actionType==='edit_price'||actionType==='edit_sell_price') { tg.showAlert('Các gói hiện có:\n'+options); fields.option_id=Number(adminAsk('ID gói cần sửa:')); fields.price=Number(adminAsk('Giá mới (VNĐ):')); if(!fields.option_id||!Number.isSafeInteger(fields.price)||fields.price<0)return; }
+                else if(actionType==='detail_product'||actionType==='stock') { tg.showAlert('Sản phẩm hiện có:\n'+products); const pid=Number(adminAsk('ID sản phẩm:')); if(!pid)return; const r=await adminApi('stock',{product_id:pid}); tg.showAlert((r.items||[]).map(x=>`${x.duration_label}: còn ${x.available}/${x.total} · Giá ${adminMoney(x.price)} · Sell ${adminMoney(x.sell_price)}`).join('\n')||'Không có gói sản phẩm.'); return; }
+                else if(actionType==='rename_category') { tg.showAlert('Danh mục hiện có:\n'+cats); fields.category_id=Number(adminAsk('ID danh mục cần đổi tên:')); fields.name=adminAsk('Tên danh mục mới:'); if(!fields.category_id||!fields.name)return; }
+                else if(actionType==='delete_category'||actionType==='delete_product') { tg.showAlert(actionType==='delete_category'?'Danh mục:\n'+cats:'Sản phẩm:\n'+products); fields.id=Number(adminAsk('Nhập ID cần xóa:')); if(!fields.id)return; if(!confirm('Bạn chắc chắn muốn xóa? Thao tác này không thể hoàn tác.'))return; }
+                const r=await adminApi(actionType,fields); tg.showAlert(r.message || 'Đã thực hiện thành công.');
+                await loadCatalog(); await refreshAccountData();
+            } catch(e) { tg.showAlert(e.message || 'Không thể thực hiện thao tác Admin.'); }
+        }
+        async function adminAddKeyFlow() {
+            try {
+                const ov=await adminOverview();
+                const options=(ov.options||[]).map(x=>`${x.id}: ${x.product_name} – ${x.duration_label}`).join('\n');
+                tg.showAlert('Chọn gói để thêm key:\n'+(options||'Chưa có gói'));
+                const option_id=Number(adminAsk('Nhập ID gói sản phẩm:')); if(!option_id)return;
+                const keys=adminAsk('Dán danh sách key (mỗi key một dòng):'); if(!keys)return;
+                const r=await adminApi('add_keys',{option_id,keys}); tg.showAlert(r.message);
+                await loadCatalog();
+            } catch(e) { tg.showAlert(e.message || 'Không thể thêm key.'); }
         }
 
         function chooseCategory(catName) {
@@ -766,15 +856,6 @@
                 reader.readAsDataURL(file);
             }
             event.target.value = '';
-        }
-
-        function adminAction(actionType) {
-            if (actionType === 'stats') {
-                tg.showAlert('Vui lòng xem thống kê thực tế trong bảng quản trị bot.');
-            } else if (actionType === 'broadcast') {
-                let msg = prompt('Nhập nội dung thông báo gửi đến toàn bộ người dùng:');
-                if (msg) tg.showAlert('Đã phát thông báo thành công tới tất cả người dùng!');
-            }
         }
 
         function selectPackage(element, pkgName, price, optionId, productName) {

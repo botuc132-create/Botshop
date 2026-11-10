@@ -1,60 +1,53 @@
 # Jinny Cheat Bot + Mini App (một dịch vụ duy nhất)
 
-Dự án dùng `python-telegram-bot 21.6`, PostgreSQL và **một tiến trình duy nhất**. File `bot.py` vừa chạy Telegram bot polling, vừa phục vụ giao diện Mini App và các endpoint nội bộ qua cùng domain/port. Không cần file `web_api.py`, không cần tạo Railway API service riêng.
+Dự án chạy Telegram bot polling và Mini App/API trong **một tiến trình Python**. `bot.py` dùng chung PostgreSQL cho bot và Mini App; không cần tạo thêm web service.
 
-## 1. Biến môi trường
+## File cần có trong thư mục gốc
 
-Cấu hình trong Railway Variables:
+- `bot.py` — Telegram bot, xác thực Telegram Mini App, API và quản trị.
+- `index.html` — giao diện Mini App (được `bot.py` phục vụ tại `/`).
+- `requirements.txt` — thư viện Python.
+- `railway.toml` / `Procfile` — cấu hình chạy `python bot.py`.
+
+## Biến môi trường
+
+Thiết lập trong Railway Variables hoặc file `.env` riêng trên VPS:
+
 - `BOT_TOKEN`: token bot từ BotFather.
-- `ADMIN_IDS`: Telegram ID admin, nhiều ID phân tách bằng dấu phẩy.
-- `DATABASE_URL`: URL PostgreSQL đang dùng bởi bot.
-- `QR_BANK`, `QR_ACCOUNT`, `QR_HOLDER`, `QR_TEMPLATE`, `QR_SHOWINFO`: thông tin tài khoản nhận tiền.
-- `MINI_APP_URL`: domain HTTPS của chính Railway service này, ví dụ `https://ten-service.up.railway.app/`.
-- `PORT`: Railway tự cấp; không cần tự đặt nếu Railway đã cấp.
+- `ADMIN_IDS`: Telegram ID của các admin, nhiều ID phân tách bằng dấu phẩy.
+- `DATABASE_URL`: URL PostgreSQL hiện tại của dự án. Dùng đúng database cũ để giữ user, số dư, lịch sử mua và kho key.
+- `MINI_APP_URL`: domain HTTPS công khai của service, ví dụ `https://ten-service.up.railway.app/`.
+- `PORT`: nền tảng tự cấp; mặc định `3000` nếu chạy VPS và không khai báo.
+- `QR_BANK`, `QR_ACCOUNT`, `QR_HOLDER`, `QR_TEMPLATE`, `QR_SHOWINFO`, `QR_MEMO_SUFFIX`: cấu hình QR (tùy chọn).
+- `SHOPHENRY_API_TOKEN`, `SHOPHENRY_API_URL`: chỉ cần nếu có sản phẩm Aim Hack dùng ShopHenry.
 - `LOG_LEVEL=INFO` (tùy chọn).
 
-## 2. Deploy một Railway service
+Không đưa `.env`, bot token hoặc database password lên GitHub.
 
-1. Deploy repository lên Railway như một service duy nhất.
-2. Start Command: `python bot.py` (đã đặt trong `railway.toml`).
-3. Thêm các biến môi trường ở mục 1, đặc biệt `BOT_TOKEN`, `ADMIN_IDS`, `DATABASE_URL` và các biến `QR_*`.
-4. Generate domain HTTPS cho service.
-5. Sao chép domain đó, đặt làm `MINI_APP_URL` (thêm dấu `/` cuối nếu muốn), rồi redeploy/restart.
-6. Mở bot, gửi `/start`; menu có nút **🚀 Mở Jinny Cheat Mini App**.
+## Chạy
 
-Trang HTML được phục vụ trực tiếp từ `bot.py` tại `/`. Các request đọc số dư, tạo đơn nạp và xác nhận đã chuyển tiền đi về cùng domain. Trong HTML, `API_BASE_URL` tự lấy `window.location.origin`, không cần sửa tay.
+Cài thư viện: `pip install -r requirements.txt`
 
-## 3. Luồng nạp tiền
+Chạy duy nhất một tiến trình: `python bot.py`
 
-1. Người dùng mở Mini App từ nút Web App của bot.
-2. Mini App xác thực Telegram `initData`, đọc số dư/tổng nạp/lịch sử từ PostgreSQL.
-3. Khi tạo QR, bot tạo đơn `pending`, mã chuyển khoản duy nhất dạng `NAP<TelegramID>D<DepositID>` và thời hạn 5 phút.
-4. Người dùng chuyển khoản rồi bấm **ĐÃ CHUYỂN TIỀN**. Đơn chuyển sang `submitted`; bot gửi thông tin đơn cùng nút **DUYỆT / TỪ CHỐI** cho admin.
-5. Admin kiểm tra tiền thực nhận rồi duyệt. Bot cộng số dư và ghi `balance_transactions`; đơn đã xử lý không thể cộng lần hai. Mini App tự làm mới số dư, tổng nạp và lịch sử mỗi 15 giây.
+`bot.py` vừa khởi chạy Telegram polling vừa mở web server tại `0.0.0.0:$PORT`. Đặt `MINI_APP_URL` bằng domain HTTPS của service, sau đó gửi `/start` cho bot và bấm **🚀 Mở Jinny Cheat Mini App**.
 
-## 4. Hết hạn và an toàn
+## Admin trong Mini App
 
-- Máy chủ đánh dấu đơn `pending` hết hạn sau 5 phút.
-- Nút “Đã chuyển tiền” không tự cộng tiền; nó chỉ gửi yêu cầu để admin kiểm tra.
-- Admin có thể duyệt đơn `expired` chỉ khi đã kiểm tra sao kê và xác nhận tiền thực nhận.
-- `BOT_TOKEN`, `DATABASE_URL` và thông tin ngân hàng chỉ đặt trong Railway Variables hoặc `.env` riêng, không commit lên GitHub.
-- Chỉ chạy một bản bot polling cho mỗi bot token.
+Vào **Cá nhân → Quản trị Admin**. Danh sách chức năng được xác thực lại ở máy chủ theo `ADMIN_IDS`; việc ẩn nút trên giao diện không phải lớp bảo mật duy nhất. Có thể xem thống kê, tìm người dùng, khóa/mở khóa, cộng/trừ số dư, cấp/gỡ Sell, xem lịch sử, thêm danh mục/sản phẩm/key, cập nhật link hướng dẫn, gán ShopHenry ID, sửa giá, đổi tên/xóa danh mục/sản phẩm, xem kho, bật/tắt bảo trì, tải NewsEmoji và gửi broadcast.
 
-## 5. Kiểm thử
+## Dữ liệu và thanh toán
 
-1. Gửi `/start` để tài khoản được tạo trong database.
-2. Mở Mini App từ bot, tạo đơn nạp tối thiểu 2.000đ.
-3. Bấm “Đã chuyển tiền” và kiểm tra admin nhận được thông báo.
-4. Admin xác nhận tiền trong ngân hàng rồi bấm DUYỆT. QR được tạo tự động, nhưng bản source hiện tại chưa có webhook/API đối soát ngân hàng nên bước cộng tiền vẫn cần Admin duyệt thủ công.
-5. Kiểm tra số dư, tổng nạp và lịch sử trong Mini App.
-6. Thử duyệt lại cùng đơn: bot phải báo đã xử lý, không cộng lần hai.
+Mini App và Telegram bot cùng sử dụng `DATABASE_URL`. Khi cập nhật code, không đổi sang database mới hoặc xóa volume/database cũ nếu muốn giữ số dư, người dùng, lịch sử và kho key.
 
-**Lưu ý:** không có webhook đối soát ngân hàng trong source này. Muốn tự động duyệt mà không cần admin phải tích hợp API/webhook chính thức của ngân hàng hoặc nhà cung cấp thanh toán.
+Tạo QR chỉ tạo đơn nạp `pending`. Khi người dùng bấm **ĐÃ CHUYỂN TIỀN**, bot gửi yêu cầu cho admin; tiền chỉ được cộng sau khi admin kiểm tra sao kê và duyệt. Source chưa có webhook đối soát ngân hàng tự động.
 
+## Kiểm tra sau deploy
 
-## Ghi chú bản sửa
-- Tự bổ sung cột `balance_transactions.transaction_type` cho PostgreSQL cũ khi khởi động.
-- QR dùng VietinBank / 102886882160 / BACH CONG HIEU HUY; nội dung chuyển khoản riêng theo ID và mã đơn.
-- Bot hỏi số lượng trước khi mua từ kho key.
-- Mua qua Mini App gửi thông báo và key vào chat bot.
-- QR tạo mã thanh toán; xác nhận tiền vẫn cần admin duyệt nếu chưa tích hợp webhook ngân hàng.
+1. Kiểm tra `https://domain-cua-ban/health` trả về `ok: true`.
+2. Gửi `/start`, mở Mini App từ nút Web App của bot.
+3. Kiểm tra số dư, danh mục, lịch sử.
+4. Đăng nhập bằng một Telegram ID có trong `ADMIN_IDS`, mở tab Cá nhân và thử thống kê.
+5. Thử nạp tiền bằng số nhỏ; chỉ admin duyệt sau khi xác nhận tiền thực nhận.
+
+Chỉ chạy **một bản polling** cho mỗi bot token. Nếu dùng VPS, mở cổng `PORT` và cấu hình reverse proxy/domain HTTPS để Telegram Mini App truy cập được.
