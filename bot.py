@@ -9,7 +9,6 @@ import time
 import hmac
 import hashlib
 import threading
-import json as _json
 from urllib.parse import parse_qsl
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -20,7 +19,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 import uvicorn
 import psycopg
 from psycopg.rows import dict_row
@@ -29,10 +28,9 @@ from psycopg_pool import ConnectionPool
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / '.env')
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, MessageEntity, WebAppInfo
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, filters,
+    Application, CommandHandler, CallbackQueryHandler, ContextTypes,
 )
 
 DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
@@ -45,7 +43,6 @@ QR_BANK = os.getenv('QR_BANK', 'BIDV').strip()
 QR_ACCOUNT = os.getenv('QR_ACCOUNT', '8817735872').strip()
 QR_HOLDER = os.getenv('QR_HOLDER', 'LE MINH DUONG').strip()
 QR_TEMPLATE = os.getenv('QR_TEMPLATE', 'compact2').strip()
-QR_SHOWINFO = os.getenv('QR_SHOWINFO', 'false').strip().lower()
 MINI_APP_URL = os.getenv('MINI_APP_URL', '').strip()
 QR_MEMO_PREFIX = 'NAP'
 DB_POOL = None
@@ -61,19 +58,10 @@ ADMIN_KB = InlineKeyboardMarkup([
     [InlineKeyboardButton('👤 Thông tin người dùng', callback_data='adm:usercheck')],
     [InlineKeyboardButton('➕ Thêm sản phẩm', callback_data='adm:addproduct')],
     [InlineKeyboardButton('🔗 Thêm link cách cài', callback_data='adm:addguide')],
-    [InlineKeyboardButton('🔗 Gán ID ShopHenry (Aim Hack)', callback_data='adm:mapshop')],
-    [InlineKeyboardButton('✏️ Sửa giá / thời hạn', callback_data='adm:editproduct')],
-    [InlineKeyboardButton('💰 Sửa giá Sell', callback_data='adm:editsellprice')],
-    [InlineKeyboardButton('📋 Chi tiết sản phẩm', callback_data='adm:detailproduct')],
-    [InlineKeyboardButton('📝 Đổi tên danh mục ngoài', callback_data='adm:renamecat')],
-    [InlineKeyboardButton('🗑 Xóa sản phẩm', callback_data='adm:delproduct')],
     [InlineKeyboardButton('🔑 Thêm key sản phẩm', callback_data='adm:addkeys')],
     [InlineKeyboardButton('📦 Kiểm tra kho', callback_data='adm:stock')],
     [InlineKeyboardButton('🛠 Bảo trì: Bật / Tắt', callback_data='adm:maintenance')],
-    [InlineKeyboardButton('✨ Kho Emoji NewsEmoji', callback_data='adm:emoji')],
 ])
-
-DURATIONS = {'1h': '1 giờ', '1d': '1 ngày', '7d': '7 ngày', '30d': '30 ngày'}
 
 class Database:
     def __init__(self):
@@ -111,13 +99,10 @@ def db():
     return Database()
 
 def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
-def now_vn(): return datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).strftime('%d/%m/%Y %H:%M:%S')
-
 def make_qr_url(amount, memo):
     return f"https://img.vietqr.io/image/{QR_BANK}-{QR_ACCOUNT}-{QR_TEMPLATE}.png?amount={amount}&addInfo={memo}&accountName={urllib.parse.quote(QR_HOLDER)}"
 
 def is_admin(update): return bool(update.effective_user and update.effective_user.id in ADMIN_IDS)
-
 def is_aim_hack_product(product_name):
     normalized = re.sub(r'[^a-z0-9]+', '', str(product_name or '').lower())
     return 'aimhack' in normalized
@@ -148,24 +133,6 @@ def init_db():
         """CREATE TABLE IF NOT EXISTS products (
             id SERIAL PRIMARY KEY, category_id BIGINT REFERENCES categories(id) ON DELETE CASCADE,
             name TEXT NOT NULL, created_by BIGINT, created_at TEXT NOT NULL)""",
-        r"""DO $$ BEGIN
-            IF to_regclass('public.product_options') IS NULL THEN
-                EXECUTE format(
-                    'CREATE TABLE public.product_options (
-                        id BIGSERIAL PRIMARY KEY,
-                        product_id %s NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
-                        duration TEXT NOT NULL CHECK(duration IN (''1h'',''1d'')),
-                        duration_label TEXT NOT NULL,
-                        price BIGINT NOT NULL DEFAULT 0,
-                        sell_price BIGINT NOT NULL DEFAULT 0,
-                        UNIQUE(product_id, duration))',
-                    (SELECT format_type(a.atttypid, a.atttypmod)
-                     FROM pg_attribute a
-                     WHERE a.attrelid = 'public.products'::regclass
-                       AND a.attname = 'id' AND NOT a.attisdropped)
-                );
-            END IF;
-        END $$""",
         """CREATE TABLE IF NOT EXISTS product_keys (
             id BIGSERIAL PRIMARY KEY, option_id BIGINT NOT NULL REFERENCES product_options(id) ON DELETE CASCADE,
             key_value TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'available' CHECK(status IN ('available','sold')),
@@ -194,13 +161,6 @@ def user_menu_text(user, balance):
             f'💰 Số dư: {balance:,}đ\n━━━━━━━━━━━━━━━━━━\n\n'
             f'👇 Chọn chức năng bên dưới:')
 
-def admin_menu_text(): return '🛠 QUẢN TRỊ SHOP\nChọn chức năng bên dưới:'
-
-def maintenance_enabled():
-    with db() as con:
-        row=con.execute("SELECT setting_value FROM bot_settings WHERE setting_key='maintenance'").fetchone()
-    return bool(row and row['setting_value']=='on')
-
 def main_menu_markup():
     rows = [
         [InlineKeyboardButton('👤 Tài Khoản', callback_data='menu:account'), InlineKeyboardButton('📜 Lịch Sử Mua', callback_data='menu:history')],
@@ -228,44 +188,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if message is None or user is None: return
     context.user_data.clear()
     stamp = now()
-    try:
-        with db() as con:
-            con.execute("""INSERT INTO users(user_id,username,full_name,joined_at,last_seen) VALUES(?,?,?,?,?)
-                ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,full_name=EXCLUDED.full_name,last_seen=EXCLUDED.last_seen""",
-                (user.id, user.username or '', user.full_name or '', stamp, stamp))
-            row = con.execute('SELECT balance,is_locked FROM users WHERE user_id=?', (user.id,)).fetchone()
-        if row and row['is_locked']:
-            await message.reply_text('⛔ Tài khoản của bạn đang bị khóa.', reply_markup=USER_KB)
-            return
-        if maintenance_enabled() and user.id not in ADMIN_IDS:
-            await message.reply_text('🛠 Bot đang bảo trì. Vui lòng quay lại sau.', reply_markup=USER_KB)
-            return
-        balance = row['balance'] if row else 0
-        await message.reply_text(user_menu_text(user, balance), reply_markup=main_menu_markup(), parse_mode='HTML')
-    except Exception:
-        log.exception('Failed to handle /start')
-        await message.reply_text('⚠️ Lỗi cơ sở dữ liệu khi khởi động.')
+    with db() as con:
+        con.execute("""INSERT INTO users(user_id,username,full_name,joined_at,last_seen) VALUES(?,?,?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,full_name=EXCLUDED.full_name,last_seen=EXCLUDED.last_seen""",
+            (user.id, user.username or '', user.full_name or '', stamp, stamp))
+        row = con.execute('SELECT balance FROM users WHERE user_id=?', (user.id,)).fetchone()
+    balance = row['balance'] if row else 0
+    await message.reply_text(user_menu_text(user, balance), reply_markup=main_menu_markup(), parse_mode='HTML')
 
 async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update):
-        await update.message.reply_text('⛔ Không có quyền admin.', reply_markup=USER_KB)
-        return
-    context.user_data.clear()
-    await update.message.reply_text(admin_menu_text(), reply_markup=ADMIN_KB)
+    if not is_admin(update): return
+    await update.message.reply_text("🛠 BẢNG QUẢN TRỊ ADMIN", reply_markup=ADMIN_KB)
 
-# Hiển thị Cửa Hàng & Danh mục sản phẩm
-async def show_shop(message, edit=False):
+async def show_shop(q, edit=False):
     cats = get_categories()
     if not cats:
         txt = '🛍 CỬA HÀNG\n\nHiện chưa có danh mục sản phẩm.'
-        if edit: await message.edit_text(txt, reply_markup=inline_back('shop:home'))
-        else: await message.reply_text(txt)
+        if edit: await q.edit_message_text(txt, reply_markup=inline_back('shop:home'))
+        else: await q.message.reply_text(txt)
         return
     rows = [[InlineKeyboardButton(c['name'], callback_data=f"shop:cat:{c['id']}")] for c in cats]
     rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
     txt = '🎮 DANH MỤC: SHOP\n\n❝ Chọn danh mục bên dưới để xem sản phẩm và gói thời hạn: ❞'
-    if edit: await message.edit_text(txt, reply_markup=InlineKeyboardMarkup(rows))
-    else: await message.reply_text(txt, reply_markup=InlineKeyboardMarkup(rows))
+    if edit: await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(rows))
+    else: await q.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(rows))
 
 async def show_category(q, category_id, user_id):
     with db() as con:
@@ -283,31 +229,15 @@ async def show_category(q, category_id, user_id):
     rows = []
     for o in opts:
         is_sh = is_aim_hack_product(o['product_name'])
-        if is_sh:
-            src_str = 'ShopHenry' if o.get('shophenry_product_id') else 'Chưa gán ID'
-        else:
-            src_str = f"Kho: {stock_for_option(o['id'])}"
-            
+        src_str = ('ShopHenry' if o.get('shophenry_product_id') else 'Chưa gán ID') if is_sh else f"Kho: {stock_for_option(o['id'])}"
         current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
         btn_text = f"✨ {o['product_name']} ({o['duration_label']}) – {current_price:,}đ ({src_str})"
         rows.append([InlineKeyboardButton(btn_text, callback_data=f"shop:option:{o['id']}")])
     rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
     
-    txt = f"✨ {escape(cat['name'])}\n\n❝ Chọn gói sản phẩm bên dưới để xem chi tiết và mua: ❞"
+    txt = f"✨ {escape(cat['name'])}\n\n❝ Chọn gói sản phẩm bên dưới để mua: ❞"
     await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(rows), parse_mode='HTML')
 
-async def user_history(q, uid):
-    with db() as con: 
-        rows = con.execute('SELECT * FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 20', (uid,)).fetchall()
-    if not rows:
-        await q.edit_message_text('📜 Bạn chưa có lịch sử mua hàng.', reply_markup=inline_back('shop:home'))
-        return
-    out = ['📜 LỊCH SỬ MUA HÀNG']
-    for r in rows: 
-        out.append(f"\n🧾 Đơn #{r['id']} · {r['created_at']}\n{r['product_name']} · {r['duration_label']}\nSố lượng: {r['quantity']} · {r['total_price']:,}đ")
-    await q.edit_message_text('\n'.join(out), reply_markup=inline_back('menu:home'))
-
-# Xử lý tất cả các nút bấm menu và admin
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query: return
@@ -321,8 +251,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         balance = row['balance'] if row else 0
         await query.edit_message_text(user_menu_text(query.from_user, balance), reply_markup=main_menu_markup(), parse_mode='HTML')
 
-    elif data == 'shop:home_list' or data == 'shop:home':
-        await show_shop(query.message, edit=True)
+    elif data == 'shop:home_list' or data == 'shop:home_menu':
+        await show_shop(query, edit=True)
 
     elif data.startswith('shop:cat:'):
         cat_id = data.split(':')[2]
@@ -332,60 +262,47 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with db() as con:
             row = con.execute('SELECT balance FROM users WHERE user_id=?', (user_id,)).fetchone()
         balance = row['balance'] if row else 0
-        await query.edit_message_text(
-            f"👤 **THÔNG TIN TÀI KHOẢN**\n\n🆔 ID: <code>{user_id}</code>\n💰 Số dư: <b>{balance:,}đ</b>",
-            parse_mode='HTML',
-            reply_markup=inline_back('shop:home')
-        )
+        await query.edit_message_text(f"👤 **TÀI KHOẢN**\n\nID: <code>{user_id}</code>\nSố dư: <b>{balance:,}đ</b>", parse_mode='HTML', reply_markup=inline_back('shop:home'))
 
     elif data == 'menu:history':
-        await user_history(query, user_id)
+        with db() as con: 
+            rows = con.execute('SELECT * FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 10', (user_id,)).fetchall()
+        if not rows:
+            await query.edit_message_text('📜 Bạn chưa có lịch sử mua hàng.', reply_markup=inline_back('shop:home'))
+            return
+        out = ['📜 **LỊCH SỬ MUA HÀNG**']
+        for r in rows: 
+            out.append(f"\n• Đơn #{r['id']}: {r['product_name']} ({r['duration_label']}) - {r['total_price']:,}đ")
+        await query.edit_message_text('\n'.join(out), parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
 
     elif data == 'menu:deposit':
-        await query.edit_message_text(
-            "💳 **NẠP TIỀN VÀO TÀI KHOẢN**\n\nBạn có thể nạp tiền tự động cực kỳ nhanh chóng bằng cách mở **Jinny Cheat Mini App** ngay bên dưới menu chính hoặc nhắn Admin.",
-            parse_mode='MARKDOWN',
-            reply_markup=inline_back('shop:home')
-        )
+        await query.edit_message_text("💳 **NẠP TIỀN**\nHãy mở **Jinny Cheat Mini App** ở menu chính để nạp tiền tự động qua QR.", parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
 
     elif data == 'menu:guide':
         with db() as con:
             cats = con.execute("SELECT name, guide_url FROM categories WHERE guide_url IS NOT NULL AND guide_url != ''").fetchall()
-        if not cats:
-            txt = "📖 **HƯỚNG DẪN CÀI ĐẶT**\n\nChưa có link hướng dẫn nào được cập nhật."
-        else:
-            txt = "📖 **HƯỚNG DẪN CÀI ĐẶT**\n\n" + "\n".join([f"• {c['name']}: {c['guide_url']}" for c in cats])
+        txt = "📖 **HƯỚNG DẪN CÀI ĐẶT**\n\n" + ("\n".join([f"• {c['name']}: {c['guide_url']}" for c in cats]) if cats else "Chưa có hướng dẫn.")
         await query.edit_message_text(txt, parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
 
     elif data == 'menu:support':
-        await query.edit_message_text(
-            "🆘 **HỖ TRỢ KHÁCH HÀNG**\n\nLiên hệ trực tiếp Admin để được hỗ trợ xử lý các vấn đề về tài khoản và key.",
-            parse_mode='MARKDOWN',
-            reply_markup=inline_back('shop:home')
-        )
+        await query.edit_message_text("🆘 **HỖ TRỢ**\nLiên hệ Admin để được giải đáp thắc mắc.", parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
 
     elif data.startswith('adm:'):
         if not is_admin(update): return
         action = data.split(':')[1]
         if action == 'stats':
             with db() as con:
-                users_count = con.execute("SELECT COUNT(*) AS n FROM users").fetchone()['n']
-                total_rev = con.execute("SELECT SUM(total_price) AS total FROM purchases").fetchone()['total'] or 0
-            await query.edit_message_text(f"📊 **THỐNG KÊ HỆ THỐNG**\n\n👥 Tổng thành viên: {users_count}\n💰 Tổng doanh thu: {total_rev:,}đ", parse_mode='MARKDOWN', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🌐 Quay lại', callback_data='shop:home')]]))
+                uc = con.execute("SELECT COUNT(*) AS n FROM users").fetchone()['n']
+                rev = con.execute("SELECT SUM(total_price) AS total FROM purchases").fetchone()['total'] or 0
+            await query.edit_message_text(f"📊 **THỐNG KÊ**\nThành viên: {uc}\nDoanh thu: {rev:,}đ", parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
         else:
-            await query.edit_message_text(f"🛠 Chức năng quản trị [{action}] đang được thực hiện qua Bot. Bạn có thể dùng các lệnh quản lý trực tiếp.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🌐 Quay lại', callback_data='shop:home')]]))
+            await query.edit_message_text("🛠 Tính năng admin quản lý qua bot.", reply_markup=inline_back('shop:home'))
 
 # ==========================================
 # CẤU HÌNH FASTAPI & MINI APP API
 # ==========================================
 app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 def verify_telegram_init_data(init_data: str) -> dict:
     try:
@@ -394,8 +311,7 @@ def verify_telegram_init_data(init_data: str) -> dict:
         if not hash_check: return {}
         data_check_string = '\n'.join(f"{k}={v}" for k, v in sorted(parsed.items()))
         secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
-        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-        if calculated_hash == hash_check:
+        if hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest() == hash_check:
             return json.loads(parsed.get('user', '{}'))
     except Exception:
         pass
@@ -408,19 +324,13 @@ def read_root():
 @app.get("/api/me")
 async def api_get_me(x_telegram_init_data: str = Header(None)):
     user = verify_telegram_init_data(x_telegram_init_data or "")
-    if not user or "id" not in user:
-        raise HTTPException(status_code=401, detail="Xác thực Telegram thất bại.")
+    if not user or "id" not in user: raise HTTPException(status_code=401)
     uid = user["id"]
     with db() as con:
-        u_row = con.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()
-        balance = u_row['balance'] if u_row else 0
+        balance = con.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()['balance'] or 0
         deposits = con.execute("SELECT id, amount, status, note, created_at FROM deposits WHERE user_id=? ORDER BY id DESC LIMIT 10", (uid,)).fetchall()
         total_dep = con.execute("SELECT SUM(amount) AS total FROM deposits WHERE user_id=? AND status='approved'", (uid,)).fetchone()['total'] or 0
-    return {
-        "balance": balance,
-        "total_deposit": total_dep,
-        "deposits": [dict(d) for d in deposits]
-    }
+    return {"balance": balance, "total_deposit": total_dep, "deposits": [dict(d) for d in deposits]}
 
 class DepositRequest(BaseModel):
     amount: int
@@ -428,70 +338,38 @@ class DepositRequest(BaseModel):
 @app.post("/api/deposits")
 async def api_create_deposit(req: DepositRequest, x_telegram_init_data: str = Header(None)):
     user = verify_telegram_init_data(x_telegram_init_data or "")
-    if not user or "id" not in user:
-        raise HTTPException(status_code=401, detail="Xác thực Telegram thất bại.")
-    if req.amount < 2000:
-        raise HTTPException(status_code=400, detail="Số tiền tối thiểu là 2.000đ.")
+    if not user or "id" not in user: raise HTTPException(status_code=401)
+    if req.amount < 2000: raise HTTPException(status_code=400)
     uid = user["id"]
     memo = f"{QR_MEMO_PREFIX}{uid}"
-    qr_url = make_qr_url(req.amount, memo)
     stamp = now()
     with db() as con:
-        cur = con.execute(
-            "INSERT INTO deposits(user_id, amount, status, note, created_at) VALUES(?, ?, 'pending', ?, ?) RETURNING id",
-            (uid, req.amount, memo, stamp)
-        )
+        cur = con.execute("INSERT INTO deposits(user_id, amount, status, note, created_at) VALUES(?, ?, 'pending', ?, ?) RETURNING id", (uid, req.amount, memo, stamp))
         deposit_id = cur.fetchone()["id"]
         con.commit()
-    return {
-        "deposit_id": deposit_id,
-        "amount": req.amount,
-        "transfer_content": memo,
-        "qr_url": qr_url,
-        "expires_in": 300
-    }
+    return {"deposit_id": deposit_id, "amount": req.amount, "transfer_content": memo, "qr_url": make_qr_url(req.amount, memo), "expires_in": 300}
 
 @app.post("/api/deposits/{deposit_id}/submitted")
 async def api_deposit_submitted(deposit_id: int, x_telegram_init_data: str = Header(None)):
     user = verify_telegram_init_data(x_telegram_init_data or "")
-    if not user or "id" not in user:
-        raise HTTPException(status_code=401, detail="Xác thực Telegram thất bại.")
+    if not user or "id" not in user: raise HTTPException(status_code=401)
     uid = user["id"]
     full_name = user.get("first_name", "") + " " + user.get("last_name", "")
-    username = user.get("username", "Không có")
     with db() as con:
         dep = con.execute("SELECT * FROM deposits WHERE id=? AND user_id=?", (deposit_id, uid)).fetchone()
-        if not dep:
-            raise HTTPException(status_code=404, detail="Không tìm thấy giao dịch nạp tiền.")
-            
-    msg_to_admin = (
-        f"🔔 <b>CÓ YÊU CẦU NẠP TIỀN MỚI TỪ MINI APP</b>\n\n"
-        f"👤 Khách hàng: {escape(full_name.strip())} (@{username})\n"
-        f"🆔 ID: <code>{uid}</code>\n"
-        f"💰 Số tiền: <b>{dep['amount']:,}đ</b>\n"
-        f"📝 Nội dung CK: <code>{dep['note']}</code>\n"
-        f"🧾 Mã đơn: #{deposit_id}\n\n"
-        f"👉 Hãy kiểm tra ngân hàng và duyệt cộng tiền cho khách!"
-    )
-    for admin_id in ADMIN_IDS:
+        if not dep: raise HTTPException(status_code=404)
+    msg = f"🔔 **YÊU CẦU NẠP TIỀN**\nID: <code>{uid}</code>\nTên: {escape(full_name)}\nSố tiền: <b>{dep['amount']:,}đ</b>\nMã: <code>{dep['note']}</code>"
+    for aid in ADMIN_IDS:
         try:
-            url_api = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-            data_body = json.dumps({"chat_id": admin_id, "text": msg_to_admin, "parse_mode": "HTML"}).encode('utf-8')
-            req = urllib.request.Request(url_api, data=data_body, headers={'Content-Type': 'application/json'}, method='POST')
+            req = urllib.request.Request(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data=json.dumps({"chat_id": aid, "text": msg, "parse_mode": "HTML"}).encode('utf-8'), headers={'Content-Type': 'application/json'}, method='POST')
             urllib.request.urlopen(req, timeout=10)
-        except Exception as e:
-            log.error(f"Lỗi gửi tin tới Admin: {e}")
-    return {"status": "success", "message": "Đã gửi yêu cầu xác nhận tới Admin thành công!"}
+        except Exception: pass
+    return {"status": "success"}
 
 async def main():
     init_db()
+    threading.Thread(target=lambda: uvicorn.run(app, host="0.0.0.0", port=8080), daemon=True).start()
     
-    def run_web():
-        uvicorn.run(app, host="0.0.0.0", port=8080)
-        
-    threading.Thread(target=run_web, daemon=True).start()
-    log.info("Web Server FastAPI đã khởi động trên cổng 8080...")
-
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin_cmd))
@@ -501,11 +379,8 @@ async def main():
     await application.start()
     await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
     
-    stop_event = asyncio.Event()
-    await stop_event.wait()
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        log.info("Bot đã dừng.")
+    try: asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit): pass
