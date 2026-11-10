@@ -553,10 +553,22 @@ async def user_history(q, uid):
     for r in rows: out.append(f"\n🧾 Đơn #{r['id']} · {r['created_at']}\n{r['product_name']} · {r['duration_label']}\nSố lượng: {r['quantity']} · {r['total_price']:,}đ")
     await q.edit_message_text('\n'.join(out), reply_markup=inline_back('menu:home'))
 
-async def broadcast(bot, text, photo=None):
-    with db() as con: ids = [r['user_id'] for r in con.execute('SELECT user_id FROM users WHERE is_locked=FALSE').fetchall()]
+async def broadcast(bot, text, photo=None, status_message=None):
+    with db() as con: 
+        users = con.execute('SELECT user_id FROM users WHERE is_locked=FALSE').fetchall()
+    
+    total = len(users)
+    if total == 0:
+        if status_message:
+            await status_message.edit_text('⚠️ Không có người dùng nào để gửi thông báo.', reply_markup=ADMIN_KB)
+        return 0
+
+    if status_message:
+        await status_message.edit_text(f'🚀 Đang tiến hành gửi thông báo đến {total} người dùng...')
+
     sent = 0
-    for uid in ids:
+    for index, u in enumerate(users, 1):
+        uid = u['user_id']
         try:
             if photo:
                 await bot.send_photo(chat_id=uid, photo=photo, caption=text, parse_mode='HTML')
@@ -566,6 +578,16 @@ async def broadcast(bot, text, photo=None):
             await asyncio.sleep(0.04)
         except Exception as e:
             log.info('Broadcast skipped user %s: %s', uid, e)
+
+        # Cập nhật trạng thái realtime nếu gửi đông
+        if status_message and index % 30 == 0:
+            try:
+                await status_message.edit_text(f'🚀 Đang gửi thông báo... ({index}/{total} người dùng)')
+            except Exception:
+                pass
+
+    if status_message:
+        await status_message.edit_text(f'✅ Đã gửi thông báo thành công tới {sent}/{total} người dùng.', reply_markup=ADMIN_KB)
     return sent
 
 async def show_news_emoji_page(target, context, page=0):
@@ -632,23 +654,32 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith('adm:') or data.startswith('admin:') or data.startswith('user:'):
         if not is_admin(update): await q.edit_message_text('⛔ Không có quyền truy cập.'); return
     
-    # === XỬ LÝ BROADCAST XÁC NHẬN / HỦY ===
+    # === XỬ LÝ BROADCAST XÁC NHẬN / HỦY (ĐÃ FIX AN TOÀN TRÁNH MẤT CONTEXT) ===
     if data == 'adm:broadcast:confirm':
         pending_bc = context.user_data.pop('pending_broadcast', None)
         if not pending_bc:
-            await q.edit_message_text('⚠️ Không tìm thấy nội dung thông báo chờ gửi hoặc phiên đã hết hạn.', reply_markup=ADMIN_KB)
+            # Fallback nếu context bị mất: lấy text trực tiếp từ caption hoặc text của message hiện tại
+            msg_obj = q.message
+            if msg_obj:
+                bc_text = msg_obj.caption or msg_obj.text or ''
+                # Lọc bỏ phần tiêu đề XEM TRƯỚC
+                if 'XEM TRƯỚC THÔNG BÁO:' in bc_text:
+                    bc_text = bc_text.split('XEM TRƯỚC THÔNG BÁO:\n\n', 1)[-1]
+                photo = msg_obj.photo[-1].file_id if msg_obj.photo else None
+                pending_bc = {'text': bc_text, 'photo': photo}
+            
+        if not pending_bc or not pending_bc.get('text'):
+            await q.edit_message_text('⚠️ Không tìm thấy nội dung thông báo. Vui lòng tạo lại thông báo từ đầu.', reply_markup=ADMIN_KB)
             return
-        await q.edit_message_text('🚀 Đang tiến hành gửi thông báo đến người dùng...')
-        n = await broadcast(context.bot, pending_bc['text'], pending_bc.get('photo'))
-        if q.message:
-            await q.message.reply_text(f'✅ Đã gửi thông báo thành công tới {n} người dùng.', reply_markup=ADMIN_KB)
+
+        await broadcast(context.bot, pending_bc['text'], pending_bc.get('photo'), status_message=q.message)
         return
 
     elif data == 'adm:broadcast:cancel':
         context.user_data.pop('pending_broadcast', None)
         await q.edit_message_text('❌ Đã hủy gửi thông báo.', reply_markup=ADMIN_KB)
         return
-    # =======================================
+    # =======================================================================
 
     if data == 'menu:guide':
         cats = get_categories()
@@ -751,7 +782,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await user_history(q, user.id)
     elif data == 'menu:deposit':
         context.user_data['flow'] = 'deposit_amount'
-        await q.edit_message_text('💳 NẠP TIỀN\n\nNhập số tiền bạn muốn nạp (VNĐ):', reply_markup=inline_back('menu:home'))
+        await q.edit_message_text('💳 NẠP TIỀN\n\nNhập số tiền muốn nạp (VNĐ):', reply_markup=inline_back('menu:home'))
     elif data == 'menu:support':
         await q.edit_message_text('🆘 HỖ TRỢ\nVui lòng liên hệ quản trị viên.', reply_markup=inline_back('menu:home'))
     elif data == 'shop:home': await show_shop(q.message, edit=True)
