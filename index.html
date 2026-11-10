@@ -61,7 +61,7 @@
 
         .role-badge { display: none; font-size: 8px; font-weight: 800; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; }
         .role-badge.reseller { display: inline-block; background-color: #0b1d30; color: var(--accent-blue); border: 1px solid #14365c; }
-        .role-badge.admin { display: inline-block; background-color: #2c0b0b; color: var(--admin-red); border: 1px solid #461313; }
+        .role-badge.admin { display: inline-block; background-color: #2c0b0b; color: var(--admin-red); border: 1px solid #461313; }\n        .role-badge.customer { display:inline-block; background:#0b1d30; color:var(--accent-blue); border:1px solid #14365c; }
 
         .banner-card { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 16px; padding: 14px 16px; display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
         .banner-text h2 { margin: 0; font-size: 16px; font-weight: 700; color: var(--text-main); }
@@ -139,7 +139,7 @@
         .ref-btn { width: 100%; background-color: #0d325c; color: var(--accent-blue); border: 1px solid #16467d; padding: 11px; border-radius: 12px; font-size: 12px; font-weight: 700; cursor: pointer; margin-bottom: 10px; }
         .ref-commission { display: flex; justify-content: space-between; align-items: center; background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 12px; padding: 12px; font-size: 12px; font-weight: 700; }
         .ref-commission span:last-child { color: var(--accent-yellow); }
-        .key-row { background-color: #060f1c; border: 1px solid #142a4a; border-radius: 10px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+        .key-row { background-color: #060f1c; border: 1px solid #142a4a; border-radius: 10px; padding: 8px 10px; display: flex; flex-direction:column; align-items:stretch; gap:8px; margin-top: 6px; min-width:0; max-width:100%; box-sizing:border-box; }\n        .key-row > div {min-width:0; width:100%; overflow-wrap:anywhere; word-break:break-word;}\n        .key-text {overflow-wrap:anywhere; word-break:break-all;}\n        .key-row .copy-btn {align-self:flex-end;}
         .key-text { font-family: monospace; font-size: 11px; color: var(--accent-blue); }
         .key-date { font-size: 9px; color: var(--text-sub); margin-top: 2px; }
         .copy-btn { background: #14335c; border: none; color: var(--text-main); border-radius: 6px; padding: 6px 8px; cursor: pointer; }
@@ -458,7 +458,7 @@
                     group.className = 'kho-item';
                     const heading = document.createElement('div');
                     heading.style.cssText = 'font-size:13px;font-weight:750;margin-bottom:8px;';
-                    heading.textContent = `${p.product_name} – ${p.duration_label} · ${Number(p.total_price || 0).toLocaleString('vi-VN')}đ`;
+                    heading.textContent = `${p.product_name} – ${fullDurationLabel(p.duration_label)} · ${Number(p.total_price || 0).toLocaleString('vi-VN')}đ`;
                     group.appendChild(heading);
                     keys.forEach(key => {
                         const row = document.createElement('div');
@@ -483,14 +483,18 @@
                 if (!purchases.length) kho.innerHTML = '<p class="deposit-desc">Chưa có key đã mua.</p>';
                 document.getElementById('total-keys-count').textContent = keyCount;
                 document.getElementById('total-spent-value').textContent = Number(data.total_spent || 0).toLocaleString('vi-VN') + 'đ';
+                const role = document.getElementById('user-role-badge');
+                role.style.display = 'inline-block';
                 if (data.is_admin) {
-                    const role = document.getElementById('user-role-badge');
-                    role.style.display = 'inline-block';
-                    role.textContent = 'ADMIN';
-                    role.className = 'role-badge admin';
+                    role.textContent = 'ADMIN'; role.className = 'role-badge admin';
                     document.getElementById('admin-panel-section').style.display = 'block';
                     document.getElementById('btn-edit-ff-img').style.display = 'block';
+                } else if (data.is_seller) {
+                    role.textContent = 'RESELLER'; role.className = 'role-badge reseller';
+                } else {
+                    role.textContent = 'CUSTOMER'; role.className = 'role-badge customer';
                 }
+                if (data.ff_app_icon) applyFFAppIcon(data.ff_app_icon);
             } catch (error) {
                 console.warn('Không thể đồng bộ tài khoản:', error);
             }
@@ -564,6 +568,11 @@
             document.getElementById('user-role-badge').style.display = "none";
         }
 
+        function fullDurationLabel(value) {
+            const v = String(value || '').trim().toLowerCase();
+            const map = {'1h':'1 giờ','1d':'1 ngày','12h':'12 giờ','7d':'7 ngày','30d':'30 ngày'};
+            return map[v] || String(value || '');
+        }
         function switchTab(tabName) {
             tg.HapticFeedback?.selectionChanged();
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -797,9 +806,11 @@
                         const info = document.createElement('div');
                         info.className = 'pkg-info';
                         const name = document.createElement('h5');
-                        name.textContent = option.duration;
+                        name.textContent = fullDurationLabel(option.duration_label || option.duration);
                         const stock = document.createElement('p');
-                        stock.textContent = 'Kho: ' + option.stock;
+                        stock.textContent = 'Kho còn: ' + option.stock;
+                        stock.style.color = Number(option.stock) > 0 ? '#22c55e' : '#ff4d4f';
+                        stock.style.fontWeight = '800';
                         info.append(name, stock);
                         const priceBox = document.createElement('div');
                         priceBox.className = 'pkg-price-box';
@@ -816,6 +827,15 @@
             closeCategoryModal();
             document.getElementById('packages-section').style.display = 'block';
             document.getElementById('checkout-box').style.display = 'none';
+        }
+
+        function applyFFAppIcon(url) {
+            if (!url) return;
+            ffAppIconUrl = url;
+            const img = document.getElementById('ff-app-img');
+            if (img) { img.src = url; img.style.display = 'block'; }
+            const fallback = document.getElementById('ff-app-default-icon');
+            if (fallback) fallback.style.display = 'none';
         }
 
         function triggerAppFilePicker() {
@@ -842,7 +862,7 @@
                         imgTag.src = imageUrl;
                         imgTag.style.display = 'block';
                         document.getElementById('ff-app-default-icon').style.display = 'none';
-                        tg.showAlert('Đã cập nhật ảnh Free Fire thành công!');
+                        adminApi('set_ff_app_icon', {image_data:imageUrl}).then(r => tg.showAlert(r.message || 'Đã lưu ảnh Free Fire cho tất cả người dùng.')).catch(err => tg.showAlert('Không lưu được ảnh: ' + err.message));
                     } else if (activeEditingCatId !== null) {
                         let cat = categoriesData.find(c => c.id === activeEditingCatId);
                         if (cat) {
@@ -989,11 +1009,16 @@
             countdownInterval = setInterval(tick, 1000);
         }
 
+        let depositSubmitBusy = false;
         async function confirmPaidAction() {
+            if (depositSubmitBusy) return;
             if (!activeDeposit || !activeDeposit.deposit_id) {
                 tg.showAlert('Bạn chưa tạo mã QR hợp lệ.');
                 return;
             }
+            const submitButton = document.querySelector('#qr-result-container button');
+            depositSubmitBusy = true;
+            if (submitButton) { submitButton.disabled = true; submitButton.textContent = 'ĐANG XÉT DUYỆT...'; }
             try {
                 const data = await apiRequest('/api/deposits/' + activeDeposit.deposit_id + '/submitted', {
                     method: 'POST',
@@ -1001,12 +1026,14 @@
                 });
                 tg.HapticFeedback?.notificationOccurred('success');
                 tg.showAlert(data.message || 'Đã gửi yêu cầu. Admin sẽ kiểm tra giao dịch.');
-                const button = document.querySelector('#qr-result-container button');
-                if (button) button.disabled = true;
+                if (submitButton) submitButton.textContent = 'BOT ĐANG XÉT DUYỆT';
                 if (countdownInterval) clearInterval(countdownInterval);
                 await refreshAccountData();
             } catch (error) {
                 tg.showAlert(error.message);
+                if (submitButton) { submitButton.disabled = false; submitButton.textContent = 'ĐÃ CHUYỂN TIỀN'; }
+            } finally {
+                depositSubmitBusy = false;
             }
         }
 

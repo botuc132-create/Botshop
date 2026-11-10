@@ -54,7 +54,10 @@ web_app = FastAPI(title='Jinny Cheat Mini App API')
 telegram_application = None
 
 
-USER_KB = ReplyKeyboardMarkup([[KeyboardButton('↩️ Trở về')]], resize_keyboard=True, is_persistent=True)
+USER_KB = ReplyKeyboardMarkup(
+    ([[KeyboardButton('🛍 Mua Key', web_app=WebAppInfo(url=MINI_APP_URL))],
+      [KeyboardButton('↩️ Trở về')]] if MINI_APP_URL.startswith('https://') else [[KeyboardButton('↩️ Trở về')]]),
+    resize_keyboard=True, is_persistent=True)
 
 ADMIN_KB = InlineKeyboardMarkup([
     [InlineKeyboardButton('📢 Thông báo', callback_data='adm:broadcast')],
@@ -246,7 +249,7 @@ def maintenance_enabled():
 def main_menu_markup():
     rows = []
     if MINI_APP_URL.startswith('https://'):
-        rows.append([InlineKeyboardButton('🚀 Mở Jinny Cheat Mini App', web_app=WebAppInfo(url=MINI_APP_URL))])
+        rows.append([InlineKeyboardButton('🛍 Mở Mini App – Giao dịch nhanh', web_app=WebAppInfo(url=MINI_APP_URL))])
     rows.extend([
         [InlineKeyboardButton('👤 Tài Khoản', callback_data='menu:account'), InlineKeyboardButton('📜 Lịch Sử Mua', callback_data='menu:history')],
         [InlineKeyboardButton('🛍 Cửa Hàng', callback_data='shop:home'), InlineKeyboardButton('💳 Nạp Tiền', callback_data='menu:deposit')],
@@ -596,7 +599,7 @@ async def user_history(q, uid):
     for r in rows: out.append(f"\n🧾 Đơn #{r['id']} · {r['created_at']}\n{r['product_name']} · {r['duration_label']}\nSố lượng: {r['quantity']} · {r['total_price']:,}đ")
     await q.edit_message_text('\n'.join(out), reply_markup=inline_back('menu:home'))
 
-async def broadcast(bot, text, photo=None, status_message=None):
+async def broadcast(bot, text, photo=None, status_message=None, reply_markup=None):
     with db() as con: 
         users = con.execute('SELECT user_id FROM users WHERE is_locked=FALSE').fetchall()
     
@@ -620,9 +623,9 @@ async def broadcast(bot, text, photo=None, status_message=None):
         uid = u['user_id']
         try:
             if photo:
-                await bot.send_photo(chat_id=uid, photo=photo, caption=text, parse_mode='HTML')
+                await bot.send_photo(chat_id=uid, photo=photo, caption=text, parse_mode='HTML', reply_markup=reply_markup)
             else:
-                await bot.send_message(chat_id=uid, text=text, parse_mode='HTML')
+                await bot.send_message(chat_id=uid, text=text, parse_mode='HTML', reply_markup=reply_markup)
             sent += 1
             await asyncio.sleep(0.04)
         except Exception as e:
@@ -1357,8 +1360,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         await msg.reply_text(f'✅ Đã thêm {added}/{len(keys)} key thành công. Kho hiện có: {stock} key.', reply_markup=ADMIN_KB)
         if added:
-            announcement = (f"🔥 CÓ HÀNG MỚI VỀ! 🔥\n━━━━━━━━━━━━━━━━━━\n📁 Danh mục: {info['category_name']}\n🛍 Sản phẩm: {info['product_name']} – {info['duration_label']}\n🔢 Số lượng: {added} sản phẩm!\n\n👉 Gõ /start để vào mua ngay!")
-            sent = await broadcast(context.bot, announcement)
+            announcement = (f"🔥 CÓ HÀNG MỚI VỀ! 🔥\n━━━━━━━━━━━━━━━━━━\n📁 Danh mục: {info['category_name']}\n🎮 Sản phẩm: {info['product_name']}\n🔢 Số lượng: {added} sản phẩm đã được cập nhật!\n\n👉 Nhấn nút Mở Shop bên dưới để vào mua ngay!")
+            shop_markup = InlineKeyboardMarkup([[InlineKeyboardButton('🛍 MỞ SHOP', web_app=WebAppInfo(url=MINI_APP_URL))]]) if MINI_APP_URL.startswith('https://') else None
+            sent = await broadcast(context.bot, announcement, reply_markup=shop_markup)
             await msg.reply_text(f'📢 Đã thông báo tới {sent} người dùng.')
         return
     
@@ -1444,12 +1448,14 @@ async def api_me(request: Request):
     user = _mini_user(request)
     with db() as con:
         u = con.execute('SELECT balance,is_locked,is_seller FROM users WHERE user_id=?', (user['id'],)).fetchone()
-        deposits = con.execute('SELECT id,amount,status,note,created_at FROM deposits WHERE user_id=? ORDER BY id DESC LIMIT 30', (user['id'],)).fetchall()
+        deposits = con.execute("SELECT id,amount,status,note,created_at FROM deposits WHERE user_id=? AND status='approved' ORDER BY id DESC LIMIT 30", (user['id'],)).fetchall()
         purchases = con.execute('SELECT id,product_name,duration_label,quantity,total_price,keys_text,created_at FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 30', (user['id'],)).fetchall()
         total_deposit = con.execute("SELECT COALESCE(SUM(amount),0) AS n FROM deposits WHERE user_id=? AND status='approved'", (user['id'],)).fetchone()['n']
         total_spent = con.execute('SELECT COALESCE(SUM(total_price),0) AS n FROM purchases WHERE user_id=?', (user['id'],)).fetchone()['n']
+        icon_row=con.execute("SELECT setting_value FROM bot_settings WHERE setting_key='miniapp_ff_icon'").fetchone()
     return {'user_id': user['id'], 'balance': int(u['balance']), 'is_admin': user['id'] in ADMIN_IDS,
             'is_locked': bool(u['is_locked']), 'is_seller': bool(u['is_seller']),
+            'ff_app_icon': icon_row['setting_value'] if icon_row else '',
             'total_deposit': int(total_deposit), 'total_spent': int(total_spent),
             'deposits': deposits, 'purchases': purchases}
 
@@ -1531,8 +1537,16 @@ async def api_create_deposit(request: Request):
     except Exception: raise HTTPException(status_code=400,detail='Số tiền không hợp lệ.')
     if amount<2000 or amount>1000000000: raise HTTPException(status_code=400,detail='Số tiền nạp từ 2.000đ đến 1.000.000.000đ.')
     with db() as con:
-        recent=con.execute("SELECT id FROM deposits WHERE user_id=? AND status IN ('pending','submitted') ORDER BY id DESC LIMIT 1",(user['id'],)).fetchone()
-        if recent: raise HTTPException(status_code=400,detail='Bạn đang có đơn nạp chưa xử lý. Vui lòng hoàn tất hoặc liên hệ Admin.')
+        # Serialize concurrent create requests for the same account.
+        con.execute('SELECT user_id FROM users WHERE user_id=? FOR UPDATE',(user['id'],)).fetchone()
+        con.execute("""UPDATE deposits SET status='expired'
+            WHERE user_id=? AND status='pending'
+              AND created_at::timestamptz < NOW() - INTERVAL '5 minutes'""",(user['id'],))
+        recent=con.execute("SELECT id,status FROM deposits WHERE user_id=? AND status IN ('pending','submitted') ORDER BY id DESC LIMIT 1",(user['id'],)).fetchone()
+        if recent:
+            message = ('Bot đang xét duyệt đơn nạp tiền của bạn. Vui lòng không gửi spam yêu cầu cho Admin.'
+                       if recent['status']=='submitted' else 'Bạn đang có mã nạp tiền còn hiệu lực. Hãy dùng mã hiện tại hoặc đợi mã hết hạn.')
+            raise HTTPException(status_code=409,detail=message)
         row=con.execute("INSERT INTO deposits(user_id,amount,status,note,created_at) VALUES(?,?,'pending','',?) RETURNING id",(user['id'],amount,now())).fetchone()
         did=int(row['id']); memo=f'{QR_MEMO_SUFFIX}{user["id"]}D{did}'
         con.execute('UPDATE deposits SET note=? WHERE id=?',(memo,did))
@@ -1545,14 +1559,16 @@ async def api_submit_deposit(deposit_id: int, request: Request):
     with db() as con:
         dep=con.execute('SELECT d.*,u.full_name,u.username FROM deposits d JOIN users u ON u.user_id=d.user_id WHERE d.id=? AND d.user_id=? FOR UPDATE',(deposit_id,user['id'])).fetchone()
         if not dep: raise HTTPException(status_code=404,detail='Không tìm thấy đơn nạp.')
-        if dep['status']!='pending': raise HTTPException(status_code=400,detail='Đơn nạp đã được gửi hoặc xử lý.')
+        if dep['status']=='submitted':
+            return {'success':True,'already_submitted':True,'message':'Bot đang xét duyệt đơn nạp tiền của bạn. Vui lòng không gửi spam yêu cầu cho Admin.'}
+        if dep['status']!='pending': raise HTTPException(status_code=400,detail='Đơn nạp đã được xử lý hoặc hết hạn.')
         con.execute("UPDATE deposits SET status='submitted' WHERE id=?",(deposit_id,))
     body=(f'💳 YÊU CẦU XÁC NHẬN NẠP TIỀN\n\n🧾 Mã đơn: #{deposit_id}\n💰 Số tiền: {dep["amount"]:,}đ\n📝 Nội dung CK: {dep["note"]}\n👤 Tên: {dep["full_name"] or "Không có"}\n🆔 ID: {user["id"]}\n📛 Username: @{dep["username"] or "Không có"}\n\nKiểm tra giao dịch ngân hàng trước khi duyệt.')
     kb={'inline_keyboard':[[{'text':'✅ DUYỆT','callback_data':f'deposit:approve:{deposit_id}'},{'text':'❌ TỪ CHỐI','callback_data':f'deposit:reject:{deposit_id}'}]]}
     for aid in ADMIN_IDS:
         try: await asyncio.to_thread(_telegram_http,'sendMessage',{'chat_id':aid,'text':body,'reply_markup':kb})
         except Exception: log.exception('Cannot notify admin for deposit %s',deposit_id)
-    return {'success':True,'message':'Đã gửi yêu cầu xác nhận cho Admin.'}
+    return {'success':True,'message':'Đã gửi yêu cầu một lần. Bot đang xét duyệt đơn nạp tiền của bạn. Vui lòng không gửi spam yêu cầu cho Admin.'}
 
 
 @web_app.get('/api/admin/overview')
@@ -1574,6 +1590,13 @@ async def api_admin_action(request: Request):
     admin=_mini_user(request,True); data=await request.json(); action=str(data.get('action',''))
     try:
         with db() as con:
+            if action=='set_ff_app_icon':
+                image_data=str(data.get('image_data') or '')
+                if not image_data.startswith('data:image/') or len(image_data)>2_500_000:
+                    raise HTTPException(status_code=400,detail='Ảnh không hợp lệ hoặc vượt quá dung lượng cho phép.')
+                con.execute("""INSERT INTO bot_settings(setting_key,setting_value) VALUES('miniapp_ff_icon',?)
+                    ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value""",(image_data,))
+                return {'success':True,'message':'Đã lưu ảnh Free Fire. Ảnh sẽ hiển thị cho tất cả người dùng.'}
             if action=='stats':
                 return {'stats':con.execute("SELECT (SELECT COUNT(*) FROM users) AS users,(SELECT COALESCE(SUM(amount),0) FROM deposits WHERE status='approved') AS deposits,(SELECT COALESCE(SUM(balance),0) FROM users) AS balances,(SELECT COUNT(*) FROM purchases) AS purchases").fetchone()}
             if action=='usercheck':
