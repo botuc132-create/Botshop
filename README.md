@@ -1,24 +1,52 @@
-# Telegram Key Shop Bot — Railway
+# Jinny Cheat Bot + Mini App (một dịch vụ duy nhất)
 
-Source này dùng `bot.py` làm tiến trình Telegram polling worker, PostgreSQL/Supabase làm cơ sở dữ liệu.
+Dự án dùng `python-telegram-bot 21.6`, PostgreSQL và **một tiến trình duy nhất**. File `bot.py` vừa chạy Telegram bot polling, vừa phục vụ giao diện Mini App và các endpoint nội bộ qua cùng domain/port. Không cần file `web_api.py`, không cần tạo Railway API service riêng.
 
-## Deploy lên Railway
+## 1. Biến môi trường
 
-1. Tạo một GitHub repository mới và tải toàn bộ nội dung thư mục này lên (bao gồm `railway.toml`, `Procfile`, `requirements.txt` và `bot.py`).
-2. Trong Railway chọn **New Project → Deploy from GitHub Repo** rồi chọn repository.
-3. Mở service → **Variables** và thêm:
-   - `BOT_TOKEN`: token bot lấy từ BotFather (bắt buộc). Có thể đặt tên `TELEGRAM_BOT_TOKEN` thay thế; không cần tải file `.env` lên Railway.
-   - `ADMIN_IDS`: Telegram numeric ID của admin; nhiều ID cách nhau bằng dấu phẩy.
-   - `DATABASE_URL`: PostgreSQL connection string. Nếu dùng Supabase trên Railway, ưu tiên Session Pooler; bật `sslmode=require`. Không đưa dấu ngoặc vuông quanh mật khẩu và URL-encode ký tự đặc biệt.
-   - `LOG_LEVEL`: `INFO` (tùy chọn).
-   - Các biến `QR_*` nếu muốn ghi đè cấu hình QR mặc định.
-4. Deploy. Railway sẽ cài thư viện từ `requirements.txt` và chạy `python bot.py`.
-5. Xem tab **Deployments → View Logs**. Khi thành công sẽ có log `Shop bot started with PostgreSQL`. Nếu log báo thiếu biến, kiểm tra đúng tên trong **Service → Variables**, rồi Deploy lại.
-6. Mở Telegram, gửi `/start` và thử các chức năng người dùng/Admin.
+Cấu hình trong Railway Variables:
+- `BOT_TOKEN`: token bot từ BotFather.
+- `ADMIN_IDS`: Telegram ID admin, nhiều ID phân tách bằng dấu phẩy.
+- `DATABASE_URL`: URL PostgreSQL đang dùng bởi bot.
+- `QR_BANK`, `QR_ACCOUNT`, `QR_HOLDER`, `QR_TEMPLATE`, `QR_SHOWINFO`: thông tin tài khoản nhận tiền.
+- `MINI_APP_URL`: domain HTTPS của chính Railway service này, ví dụ `https://ten-service.up.railway.app/`.
+- `PORT`: Railway tự cấp; không cần tự đặt nếu Railway đã cấp.
+- `LOG_LEVEL=INFO` (tùy chọn).
 
-## Lưu ý
-- Đây là Telegram long-polling worker, không cần mở HTTP port hoặc tạo domain.
-- Không tạo nhiều replica/service chạy cùng một bot token vì nhiều tiến trình polling có thể xung đột.
-- Không tải file `.env` chứa token hoặc mật khẩu database lên GitHub.
-- Nếu bot báo lỗi kết nối database, kiểm tra `DATABASE_URL`, mật khẩu, SSL và chọn đúng Session Pooler host/port.
-- `railway.toml` đặt lệnh khởi động là `python bot.py`; `Procfile` cũng khai báo worker tương ứng.
+## 2. Deploy một Railway service
+
+1. Deploy repository lên Railway như một service duy nhất.
+2. Start Command: `python bot.py` (đã đặt trong `railway.toml`).
+3. Thêm các biến môi trường ở mục 1, đặc biệt `BOT_TOKEN`, `ADMIN_IDS`, `DATABASE_URL` và các biến `QR_*`.
+4. Generate domain HTTPS cho service.
+5. Sao chép domain đó, đặt làm `MINI_APP_URL` (thêm dấu `/` cuối nếu muốn), rồi redeploy/restart.
+6. Mở bot, gửi `/start`; menu có nút **🚀 Mở Jinny Cheat Mini App**.
+
+Trang HTML được phục vụ trực tiếp từ `bot.py` tại `/`. Các request đọc số dư, tạo đơn nạp và xác nhận đã chuyển tiền đi về cùng domain. Trong HTML, `API_BASE_URL` tự lấy `window.location.origin`, không cần sửa tay.
+
+## 3. Luồng nạp tiền
+
+1. Người dùng mở Mini App từ nút Web App của bot.
+2. Mini App xác thực Telegram `initData`, đọc số dư/tổng nạp/lịch sử từ PostgreSQL.
+3. Khi tạo QR, bot tạo đơn `pending`, mã chuyển khoản duy nhất dạng `NAP<TelegramID>D<DepositID>` và thời hạn 5 phút.
+4. Người dùng chuyển khoản rồi bấm **ĐÃ CHUYỂN TIỀN**. Đơn chuyển sang `submitted`; bot gửi thông tin đơn cùng nút **DUYỆT / TỪ CHỐI** cho admin.
+5. Admin kiểm tra tiền thực nhận rồi duyệt. Bot cộng số dư và ghi `balance_transactions`; đơn đã xử lý không thể cộng lần hai. Mini App tự làm mới số dư, tổng nạp và lịch sử mỗi 15 giây.
+
+## 4. Hết hạn và an toàn
+
+- Máy chủ đánh dấu đơn `pending` hết hạn sau 5 phút.
+- Nút “Đã chuyển tiền” không tự cộng tiền; nó chỉ gửi yêu cầu để admin kiểm tra.
+- Admin có thể duyệt đơn `expired` chỉ khi đã kiểm tra sao kê và xác nhận tiền thực nhận.
+- `BOT_TOKEN`, `DATABASE_URL` và thông tin ngân hàng chỉ đặt trong Railway Variables hoặc `.env` riêng, không commit lên GitHub.
+- Chỉ chạy một bản bot polling cho mỗi bot token.
+
+## 5. Kiểm thử
+
+1. Gửi `/start` để tài khoản được tạo trong database.
+2. Mở Mini App từ bot, tạo đơn nạp tối thiểu 2.000đ.
+3. Bấm “Đã chuyển tiền” và kiểm tra admin nhận được thông báo.
+4. Admin xác nhận tiền trong ngân hàng rồi bấm DUYỆT.
+5. Kiểm tra số dư, tổng nạp và lịch sử trong Mini App.
+6. Thử duyệt lại cùng đơn: bot phải báo đã xử lý, không cộng lần hai.
+
+**Lưu ý:** không có webhook đối soát ngân hàng trong source này. Muốn tự động duyệt mà không cần admin phải tích hợp API/webhook chính thức của ngân hàng hoặc nhà cung cấp thanh toán.

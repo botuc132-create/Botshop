@@ -5,12 +5,23 @@ import logging
 import json
 import urllib.request
 import urllib.error
+import time
+import hmac
+import hashlib
+import threading
+import json as _json
+from urllib.parse import parse_qsl
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from html import escape
 from pathlib import Path
 from urllib.parse import urlencode
 from dotenv import load_dotenv
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+import uvicorn
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -18,7 +29,7 @@ from psycopg_pool import ConnectionPool
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / '.env')
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, MessageEntity
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, MessageEntity, WebAppInfo
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ContextTypes, filters,
@@ -35,6 +46,7 @@ QR_ACCOUNT = os.getenv('QR_ACCOUNT', '102886882160').strip()
 QR_HOLDER = os.getenv('QR_HOLDER', 'BACH CONG HIEU HUY').strip()
 QR_TEMPLATE = os.getenv('QR_TEMPLATE', 'compact').strip()
 QR_SHOWINFO = os.getenv('QR_SHOWINFO', 'false').strip().lower()
+MINI_APP_URL = os.getenv('MINI_APP_URL', '').strip()
 QR_MEMO_PREFIX = 'SEVQR'
 QR_MEMO_SUFFIX = os.getenv('QR_MEMO_SUFFIX', 'NAP').strip().upper() or 'NAP'
 DB_POOL = None
@@ -174,7 +186,9 @@ def init_db():
             keys_text TEXT NOT NULL, created_at TEXT NOT NULL)""",
         """CREATE TABLE IF NOT EXISTS deposits (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id),
-            amount BIGINT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', note TEXT, created_at TEXT NOT NULL)""",
+            amount BIGINT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', note TEXT, created_at TEXT NOT NULL,
+            expires_at TIMESTAMPTZ)""",
+        "ALTER TABLE deposits ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ",
         """CREATE TABLE IF NOT EXISTS balance_transactions (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id),
             admin_id BIGINT NOT NULL, action TEXT NOT NULL CHECK(action IN ('add','subtract','deposit')) ,
@@ -231,12 +245,17 @@ def maintenance_enabled():
     return bool(row and row['setting_value']=='on')
 
 def main_menu_markup():
-    return InlineKeyboardMarkup([
+    rows = [
         [InlineKeyboardButton('👤 Tài Khoản', callback_data='menu:account'), InlineKeyboardButton('📜 Lịch Sử Mua', callback_data='menu:history')],
         [InlineKeyboardButton('🛍 Cửa Hàng', callback_data='shop:home'), InlineKeyboardButton('💳 Nạp Tiền', callback_data='menu:deposit')],
+    ]
+    if MINI_APP_URL:
+        rows.append([InlineKeyboardButton('🚀 Mở Jinny Cheat Mini App', web_app=WebAppInfo(url=MINI_APP_URL))])
+    rows.extend([
         [InlineKeyboardButton('📖 Hướng dẫn cách cài', callback_data='menu:guide')],
         [InlineKeyboardButton('🆘 Hỗ Trợ', callback_data='menu:support')],
     ])
+    return InlineKeyboardMarkup(rows)
 
 async def send_main_menu(message, user):
     with db() as con:
@@ -806,14 +825,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif row['is_locked']:
             await q.edit_message_text('⛔ Tài khoản của bạn đang bị khóa.')
         else:
-            main_menu_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton('👤 Tài Khoản', callback_data='menu:account'),
-                 InlineKeyboardButton('📜 Lịch Sử Mua', callback_data='menu:history')],
-                [InlineKeyboardButton('🛍 Cửa Hàng', callback_data='shop:home'),
-                 InlineKeyboardButton('💳 Nạp Tiền', callback_data='menu:deposit')],
-                [InlineKeyboardButton('📖 Hướng dẫn cách cài', callback_data='menu:guide')],
-                [InlineKeyboardButton('🆘 Hỗ Trợ', callback_data='menu:support')],
-            ])
+            main_menu_kb = main_menu_markup()
             await q.edit_message_text(user_menu_text(user, row['balance']), reply_markup=main_menu_kb, parse_mode='HTML')
     elif data == 'menu:account':
         with db() as con:
@@ -1125,7 +1137,7 @@ async def show_admin_user(msg, uid):
 
 async def notify_admins(context, deposit_id, amount, memo, full_name, uid, username):
     username_text = '@' + username if username else 'Không có'
-    body = (f"💳 YÊU CẦU XÁC NHẬN NẠP TIỀN\n\n🧾 Mã đơn: #{deposit_id}\n💰 Số tiền: {amount:,}đ\n📝 Nội dung CK: {memo}\n👤 Tên: {escape(full_name or 'Không có')}\n🆔 ID: {uid}\n📛 Username: {escape(username_text)}\n🕒 Thời gian xác nhận: {now_vn()} (GMT+7)\n\nKiểm tra giao dịch ngân hàng trước khi duyệt.")
+    body = (f"💳 YÊU CẦU XÁC NHẬN NẠP TIỀN\n\n🧾 Mã đơn: #{deposit_id}\n💰 Số tiền: {amount:,}đ\n📝 Nội dung CK: {memo}\n👤 Tên: {escape(full_name or 'Không có')}\n🆔 ID: {uid}\n📛 Username: {escape(username_text)}\n🕒 Thời gian xác nhận: {now_vn()} (GMT+7)\n\nKiểm tra giao dịch ngân hàng trước khi duyệt. Nếu đơn đã hết hạn, chỉ duyệt khi sao kê xác nhận tiền thực nhận.")
     kb = InlineKeyboardMarkup([[InlineKeyboardButton('✅ DUYỆT', callback_data=f'deposit:approve:{deposit_id}'), InlineKeyboardButton('❌ TỪ CHỐI', callback_data=f'deposit:reject:{deposit_id}')]])
     for admin_id in ADMIN_IDS:
         try: await context.bot.send_message(chat_id=admin_id, text=body, reply_markup=kb, parse_mode='HTML')
@@ -1139,7 +1151,7 @@ async def handle_deposit_review(q, context, data):
             dep = con.execute('SELECT * FROM deposits WHERE id=? FOR UPDATE', (deposit_id,)).fetchone()
             if not dep:
                 await q.edit_message_text('Không tìm thấy đơn nạp tiền.'); return
-            if dep['status'] not in ('pending', 'submitted'):
+            if dep['status'] not in ('pending', 'submitted', 'expired'):
                 await q.edit_message_text(f"Đơn #{deposit_id} đã được xử lý trước đó: {dep['status']}."); return
             if action == 'approve':
                 con.execute('UPDATE users SET balance=balance+? WHERE user_id=?', (dep['amount'], dep['user_id']))
@@ -1358,6 +1370,161 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await msg.reply_text('Vui lòng gửi /start để mở menu chính.')
 
+
+# ---------------------------------------------------------------------------
+# Mini App server tích hợp trực tiếp trong bot.py (chạy cùng một tiến trình)
+# ---------------------------------------------------------------------------
+miniapp = FastAPI(title='Jinny Cheat Mini App')
+miniapp.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'], allow_credentials=False,
+    allow_methods=['GET', 'POST', 'OPTIONS'],
+    allow_headers=['Content-Type', 'X-Telegram-Init-Data'],
+)
+
+class MiniAppCreateDeposit(BaseModel):
+    amount: int = Field(ge=2000, le=1_000_000_000)
+
+
+def miniapp_verify_init_data(init_data: str):
+    try:
+        values = dict(parse_qsl(init_data or '', keep_blank_values=True))
+        received_hash = values.pop('hash', None)
+        values.pop('signature', None)
+        if not received_hash:
+            return None
+        auth_date = int(values.get('auth_date', '0'))
+        now_ts = int(time.time())
+        if auth_date > now_ts + 30 or now_ts - auth_date > 3600:
+            return None
+        check_string = '\n'.join(f'{k}={v}' for k, v in sorted(values.items()))
+        secret_key = hmac.new(b'WebAppData', BOT_TOKEN.encode(), hashlib.sha256).digest()
+        calculated = hmac.new(secret_key, check_string.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calculated, received_hash):
+            return None
+        user_data = _json.loads(values['user'])
+        return user_data if isinstance(user_data, dict) and user_data.get('id') else None
+    except Exception:
+        return None
+
+
+def miniapp_auth(init_data: str):
+    if not init_data:
+        raise HTTPException(401, 'Hãy mở Mini App từ Telegram để xác thực tài khoản.')
+    tg_user = miniapp_verify_init_data(init_data)
+    if not tg_user:
+        raise HTTPException(401, 'Phiên Telegram không hợp lệ hoặc đã hết hạn. Hãy mở lại Mini App từ bot.')
+    return tg_user
+
+
+@miniapp.get('/')
+def miniapp_home():
+    return FileResponse(BASE_DIR / 'gemini-code-1794320985627.html')
+
+
+@miniapp.get('/health')
+def miniapp_health():
+    return {'ok': True, 'service': 'jinny-bot-miniapp'}
+
+
+@miniapp.get('/api/me')
+def miniapp_me(x_telegram_init_data: str = Header(default='')):
+    tg_user = miniapp_auth(x_telegram_init_data)
+    uid = int(tg_user['id'])
+    with db() as con:
+        user = con.execute('SELECT user_id,balance,username,full_name,is_locked FROM users WHERE user_id=?', (uid,)).fetchone()
+        if not user:
+            raise HTTPException(404, 'Chưa có tài khoản. Hãy gửi /start cho bot trước.')
+        if user['is_locked']:
+            raise HTTPException(403, 'Tài khoản đang bị khóa.')
+        total = con.execute("SELECT COALESCE(SUM(amount),0) AS total FROM deposits WHERE user_id=? AND status='approved'", (uid,)).fetchone()['total']
+        rows = con.execute('SELECT id,amount,status,note,created_at FROM deposits WHERE user_id=? ORDER BY id DESC LIMIT 30', (uid,)).fetchall()
+    return {
+        'user_id': uid, 'balance': int(user['balance']), 'total_deposit': int(total),
+        'deposits': [{'id': r['id'], 'amount': int(r['amount']), 'status': r['status'], 'note': r['note'], 'created_at': r['created_at']} for r in rows]
+    }
+
+
+@miniapp.post('/api/deposits')
+def miniapp_create_deposit(body: MiniAppCreateDeposit, x_telegram_init_data: str = Header(default='')):
+    tg_user = miniapp_auth(x_telegram_init_data)
+    uid, amount = int(tg_user['id']), int(body.amount)
+    expires_epoch = int(time.time()) + 300
+    with db() as con:
+        user = con.execute('SELECT user_id,is_locked FROM users WHERE user_id=? FOR UPDATE', (uid,)).fetchone()
+        if not user:
+            raise HTTPException(404, 'Bạn chưa đăng ký bot. Hãy gửi /start trước.')
+        if user['is_locked']:
+            raise HTTPException(403, 'Tài khoản đang bị khóa.')
+        active = con.execute("SELECT id FROM deposits WHERE user_id=? AND status IN ('pending','submitted') AND expires_at > NOW() ORDER BY id DESC LIMIT 1", (uid,)).fetchone()
+        if active:
+            raise HTTPException(409, f"Bạn đang có đơn nạp #{active['id']} chưa hết hạn.")
+        created = now()
+        row = con.execute("INSERT INTO deposits(user_id,amount,status,note,created_at,expires_at) VALUES(?,?,'pending','',?,to_timestamp(?)) RETURNING id", (uid, amount, created, expires_epoch)).fetchone()
+        deposit_id = int(row['id'])
+        memo = f'NAP{uid}D{deposit_id:08d}'
+        con.execute('UPDATE deposits SET note=? WHERE id=?', (memo, deposit_id))
+    qr_params = {'bank': QR_BANK, 'acc': QR_ACCOUNT, 'amount': str(amount), 'des': memo, 'template': QR_TEMPLATE, 'showinfo': QR_SHOWINFO, 'holder': QR_HOLDER}
+    return {'success': True, 'deposit_id': deposit_id, 'amount': amount, 'transfer_content': memo,
+            'qr_url': 'https://vietqr.app/img?' + urlencode(qr_params), 'expires_in': 300, 'expires_at': expires_epoch}
+
+
+@miniapp.post('/api/deposits/{deposit_id}/submitted')
+def miniapp_submit_deposit(deposit_id: int, x_telegram_init_data: str = Header(default='')):
+    tg_user = miniapp_auth(x_telegram_init_data)
+    uid = int(tg_user['id'])
+    with db() as con:
+        dep = con.execute('SELECT d.*,u.username,u.full_name FROM deposits d JOIN users u ON u.user_id=d.user_id WHERE d.id=? AND d.user_id=? FOR UPDATE', (deposit_id, uid)).fetchone()
+        if not dep:
+            raise HTTPException(404, 'Không tìm thấy đơn nạp.')
+        if dep['status'] == 'submitted':
+            return {'success': True, 'message': 'Yêu cầu này đã được gửi Admin trước đó.'}
+        if dep['status'] != 'pending':
+            raise HTTPException(409, 'Mã QR đã hết hạn hoặc đơn đã được xử lý.')
+        if dep['expires_at'] and dep['expires_at'] <= datetime.now(timezone.utc):
+            raise HTTPException(409, 'Mã QR đã hết hạn. Nếu đã chuyển tiền, hãy liên hệ Admin.')
+        con.execute("UPDATE deposits SET status='submitted' WHERE id=?", (deposit_id,))
+    username = '@' + dep['username'] if dep['username'] else 'Không có'
+    message = (f"💳 MINI APP JINNY CHEAT - YÊU CẦU XÁC NHẬN NẠP TIỀN\n\n"
+               f"🧾 Mã đơn: #{deposit_id}\n👤 Tên: {dep['full_name'] or 'Không có'}\n🆔 Telegram ID: {uid}\n"
+               f"📛 Username: {username}\n💰 Số tiền: {int(dep['amount']):,}đ\n📝 Nội dung CK: {dep['note']}\n\n"
+               '⚠️ Chỉ duyệt sau khi kiểm tra tiền thực nhận trong tài khoản ngân hàng.')
+    keyboard = {'inline_keyboard': [[
+        {'text': '✅ DUYỆT', 'callback_data': f'deposit:approve:{deposit_id}'},
+        {'text': '❌ TỪ CHỐI', 'callback_data': f'deposit:reject:{deposit_id}'}
+    ]]}
+    payload = _json.dumps({'text': message, 'reply_markup': keyboard, 'disable_web_page_preview': True}).encode()
+    for admin_id in ADMIN_IDS:
+        try:
+            req = urllib.request.Request(f'https://api.telegram.org/bot{BOT_TOKEN}/sendMessage', data=_json.dumps({**_json.loads(payload), 'chat_id': admin_id}).encode(), headers={'Content-Type': 'application/json'}, method='POST')
+            with urllib.request.urlopen(req, timeout=12) as response:
+                result = _json.loads(response.read().decode())
+                if not result.get('ok'):
+                    log.error('Telegram notify failed: %s', result)
+        except Exception:
+            log.exception('Cannot notify admin %s about deposit %s', admin_id, deposit_id)
+    return {'success': True, 'message': f'Đã gửi yêu cầu nạp #{deposit_id} tới Admin. Tiền chỉ được cộng sau khi Admin xác nhận.'}
+
+
+def miniapp_expiry_worker():
+    while True:
+        try:
+            with db() as con:
+                con.execute("UPDATE deposits SET status='expired' WHERE status='pending' AND expires_at IS NOT NULL AND expires_at <= NOW()")
+        except Exception:
+            log.exception('Mini App deposit expiry worker failed')
+        time.sleep(15)
+
+
+def start_miniapp_server():
+    port = int(os.getenv('PORT', '8000'))
+    threading.Thread(target=miniapp_expiry_worker, name='deposit-expiry', daemon=True).start()
+    config = uvicorn.Config(miniapp, host='0.0.0.0', port=port, log_level=LOG_LEVEL.lower(), access_log=False)
+    server = uvicorn.Server(config)
+    threading.Thread(target=server.run, name='miniapp-web', daemon=True).start()
+    log.info('Mini App + bot web server started on port %s', port)
+
+
 async def error_handler(update, context): log.exception('Unhandled error', exc_info=context.error)
 
 def main():
@@ -1373,6 +1540,6 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler('start', start)); app.add_handler(CommandHandler('admin', admin_cmd))
     app.add_handler(CallbackQueryHandler(callback)); app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO & ~filters.COMMAND, text_handler))
-    app.add_error_handler(error_handler); log.info('Shop bot started with PostgreSQL'); app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.add_error_handler(error_handler); log.info('Shop bot started with PostgreSQL'); start_miniapp_server(); app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__': main()
