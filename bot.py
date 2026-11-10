@@ -19,7 +19,7 @@ from urllib.parse import urlencode
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 import uvicorn
 import psycopg
@@ -41,15 +41,15 @@ SHOPHENRY_API_TOKEN = os.getenv('SHOPHENRY_API_TOKEN', '').strip()
 SHOPHENRY_API_URL = os.getenv('SHOPHENRY_API_URL', 'https://shophenry.io.vn/api/seller.php').strip()
 ADMIN_IDS = {int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip().isdigit()}
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
-QR_BANK = os.getenv('QR_BANK', 'VietinBank').strip()
-QR_ACCOUNT = os.getenv('QR_ACCOUNT', '102886882160').strip()
-QR_HOLDER = os.getenv('QR_HOLDER', 'BACH CONG HIEU HUY').strip()
-QR_TEMPLATE = os.getenv('QR_TEMPLATE', 'compact').strip()
+QR_BANK = os.getenv('QR_BANK', 'BIDV').strip()
+QR_ACCOUNT = os.getenv('QR_ACCOUNT', '8817735872').strip()
+QR_HOLDER = os.getenv('QR_HOLDER', 'LE MINH DUONG').strip()
+QR_TEMPLATE = os.getenv('QR_TEMPLATE', 'compact2').strip()
 QR_SHOWINFO = os.getenv('QR_SHOWINFO', 'false').strip().lower()
 MINI_APP_URL = os.getenv('MINI_APP_URL', '').strip()
-QR_MEMO_PREFIX = 'SEVQR'
-QR_MEMO_SUFFIX = os.getenv('QR_MEMO_SUFFIX', 'NAP').strip().upper() or 'NAP'
+QR_MEMO_PREFIX = 'NAP'
 DB_POOL = None
+
 logging.basicConfig(format='%(asctime)s | %(levelname)s | %(name)s | %(message)s', level=LOG_LEVEL)
 log = logging.getLogger('key_shop_bot')
 
@@ -112,20 +112,11 @@ def db():
 
 def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def now_vn(): return datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).strftime('%d/%m/%Y %H:%M:%S')
+
 def make_qr_url(amount, memo):
-    params = {
-        'bank': QR_BANK, 'acc': QR_ACCOUNT, 'amount': str(amount), 'des': memo,
-        'template': QR_TEMPLATE, 'showinfo': QR_SHOWINFO, 'holder': QR_HOLDER,
-    }
-    return 'https://vietqr.app/img?' + urlencode(params)
+    return f"https://img.vietqr.io/image/{QR_BANK}-{QR_ACCOUNT}-{QR_TEMPLATE}.png?amount={amount}&addInfo={memo}&accountName={urllib.parse.quote(QR_HOLDER)}"
+
 def is_admin(update): return bool(update.effective_user and update.effective_user.id in ADMIN_IDS)
-def clean_lines(raw):
-    out, seen = [], set()
-    for line in raw.splitlines():
-        v = re.sub(r'^\s*[•*\-]+\s*', '', line).strip().strip('` \t')
-        if v and v not in seen:
-            out.append(v); seen.add(v)
-    return out
 
 def is_aim_hack_product(product_name):
     normalized = re.sub(r'[^a-z0-9]+', '', str(product_name or '').lower())
@@ -231,18 +222,10 @@ def init_db():
 
 def user_menu_text(user, balance):
     name = escape(user.full_name or 'Khách hàng')
-    return (f'🎉 Xin chào, {name}!\n🛍 CHÀO MỪNG BẠN ĐẾN VỚI SHOP\n\n'
-            f'━━━━━━━━━━━━━━━━━━\n👤 Tên: {name}\n🆔 ID: {user.id}\n'
-            f'📛 Username: @{escape(user.username) if user.username else "Không có"}\n'
+    return (f'🎉 Xin chào, {name}!\n🛍 CHÀO MỪNG BẠN ĐẾN VỚI JINNY CHEAT STORE\n\n'
+            f'━━━━━━━━━━━━━━━━━━\n👤 Tên: {name}\n🆔 ID: <code>{user.id}</code>\n'
             f'💰 Số dư: {balance:,}đ\n━━━━━━━━━━━━━━━━━━\n\n'
             f'👇 Chọn chức năng bên dưới:')
-
-def admin_menu_text(): return '🛠 QUẢN TRỊ SHOP\nChọn chức năng bên dưới:'
-
-def maintenance_enabled():
-    with db() as con:
-        row=con.execute("SELECT setting_value FROM bot_settings WHERE setting_key='maintenance'").fetchone()
-    return bool(row and row['setting_value']=='on')
 
 def main_menu_markup():
     rows = [
@@ -251,386 +234,28 @@ def main_menu_markup():
     ]
     if MINI_APP_URL:
         rows.append([InlineKeyboardButton('🚀 Mở Jinny Cheat Mini App', web_app=WebAppInfo(url=MINI_APP_URL))])
-    rows.extend([
-        [InlineKeyboardButton('📖 Hướng dẫn cách cài', callback_data='menu:guide')],
-        [InlineKeyboardButton('🆘 Hỗ Trợ', callback_data='menu:support')],
-    ])
     return InlineKeyboardMarkup(rows)
-
-async def send_main_menu(message, user):
-    with db() as con:
-        row=con.execute('SELECT balance,is_locked FROM users WHERE user_id=?',(user.id,)).fetchone()
-    if not row:
-        await message.reply_text('Hãy gửi /start để bắt đầu.', reply_markup=USER_KB); return
-    if row['is_locked']:
-        await message.reply_text('⛔ Tài khoản của bạn đang bị khóa.', reply_markup=USER_KB); return
-    if maintenance_enabled() and user.id not in ADMIN_IDS:
-        await message.reply_text('🛠 Bot đang bảo trì. Vui lòng quay lại sau.', reply_markup=USER_KB); return
-    await message.reply_text(user_menu_text(user,row['balance']),reply_markup=main_menu_markup(),parse_mode='HTML')
-
-def inline_back(target='shop:home'): return InlineKeyboardMarkup([[InlineKeyboardButton('🌐 Quay lại', callback_data=target)]])
-
-def get_categories():
-    with db() as con: return con.execute('SELECT id,name,guide_url FROM categories ORDER BY id').fetchall()
-def get_products(category_id):
-    with db() as con: return con.execute('SELECT id,name FROM products WHERE category_id::text=?::text ORDER BY id', (category_id,)).fetchall()
-
-def get_product_category_id(product_id):
-    with db() as con:
-        row=con.execute('SELECT category_id FROM products WHERE id=?',(product_id,)).fetchone()
-    return row['category_id'] if row else 0
-
-def stock_for_option(option_id):
-    with db() as con: return con.execute("SELECT COUNT(*) AS n FROM product_keys WHERE option_id=? AND status='available'", (option_id,)).fetchone()['n']
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     user = update.effective_user
     if message is None or user is None: return
-    context.user_data.clear()
     stamp = now()
-    try:
-        with db() as con:
-            con.execute("""INSERT INTO users(user_id,username,full_name,joined_at,last_seen) VALUES(?,?,?,?,?)
-                ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,full_name=EXCLUDED.full_name,last_seen=EXCLUDED.last_seen""",
-                (user.id, user.username or '', user.full_name or '', stamp, stamp))
-            row = con.execute('SELECT balance,is_locked FROM users WHERE user_id=?', (user.id,)).fetchone()
-        if row and row['is_locked']:
-            await message.reply_text('⛔ Tài khoản của bạn đang bị khóa.', reply_markup=USER_KB)
-            return
-        if maintenance_enabled() and user.id not in ADMIN_IDS:
-            await message.reply_text('🛠 Bot đang bảo trì. Vui lòng quay lại sau.', reply_markup=USER_KB)
-            return
-        balance = row['balance'] if row else 0
-        await message.reply_text(user_menu_text(user, balance).replace(f'🆔 ID: {user.id}', f'🆔 ID: <code>{user.id}</code>'), reply_markup=main_menu_markup(), parse_mode='HTML')
-    except Exception:
-        log.exception('Failed to handle /start')
-        await message.reply_text('⚠️ Lỗi cơ sở dữ liệu khi khởi động.')
-
-async def admin_cmd(update, context):
-    if not is_admin(update): await update.message.reply_text('⛔ Không có quyền admin.', reply_markup=USER_KB); return
-    context.user_data.clear(); await update.message.reply_text(admin_menu_text(), reply_markup=ADMIN_KB)
-
-async def show_shop(message, edit=False):
-    cats = get_categories()
-    if not cats:
-        txt = '🛍 CỬA HÀNG\n\nHiện chưa có danh mục sản phẩm.'
-        if edit: await message.edit_text(txt, reply_markup=inline_back('shop:home'))
-        else: await message.reply_text(txt)
-        return
-    rows = [[InlineKeyboardButton(c['name'], callback_data=f"shop:cat:{c['id']}")] for c in cats]
-    rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
-    txt = '🎮 DANH MỤC: SHOP\n\n❝ Chọn danh mục bên dưới để xem sản phẩm và gói thời hạn: ❞'
-    if edit: await message.edit_text(txt, reply_markup=InlineKeyboardMarkup(rows))
-    else: await message.reply_text(txt, reply_markup=InlineKeyboardMarkup(rows))
-
-async def show_category(q, category_id, user_id):
     with db() as con:
-        cat = con.execute('SELECT * FROM categories WHERE id=?', (category_id,)).fetchone()
-        prods = con.execute('SELECT id, name FROM products WHERE category_id::text=?::text', (category_id,)).fetchall()
-        user_row = con.execute('SELECT is_seller FROM users WHERE user_id=?', (user_id,)).fetchone()
-        is_seller = bool(user_row and user_row['is_seller'])
-        prod_ids = [p['id'] for p in prods]
-        opts = []
-        if prod_ids:
-            placeholders = ','.join(['?'] * len(prod_ids))
-            opts = con.execute(f"SELECT po.*, p.name AS product_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text WHERE po.product_id::text IN ({placeholders}) ORDER BY po.id", [str(pid) for pid in prod_ids]).fetchall()
-            
-    if not cat: await q.edit_message_text('Danh mục không còn tồn tại.'); return
-    rows = []
-    for o in opts:
-        is_sh = is_aim_hack_product(o['product_name'])
-        if is_sh:
-            src_str = 'ShopHenry' if o.get('shophenry_product_id') else 'Chưa gán ID'
-        else:
-            src_str = f"Kho: {stock_for_option(o['id'])}"
-            
-        current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
-        btn_text = f"✨ {o['product_name']} ({o['duration_label']}) – {current_price:,}đ ({src_str})"
-        rows.append([InlineKeyboardButton(btn_text, callback_data=f"shop:option:{o['id']}")])
-    rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
-    
-    txt = f"✨ {escape(cat['name'])}\n\n❝ Chọn gói sản phẩm bên dưới để xem chi tiết và mua: ❞"
-    await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(rows), parse_mode='HTML')
+        con.execute("""INSERT INTO users(user_id,username,full_name,joined_at,last_seen) VALUES(?,?,?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,full_name=EXCLUDED.full_name,last_seen=EXCLUDED.last_seen""",
+            (user.id, user.username or '', user.full_name or '', stamp, stamp))
+        row = con.execute('SELECT balance FROM users WHERE user_id=?', (user.id,)).fetchone()
+    balance = row['balance'] if row else 0
+    await message.reply_text(user_menu_text(user, balance), reply_markup=main_menu_markup(), parse_mode='HTML')
 
-async def show_quantity(q, option_id, context, user_id):
-    with db() as con:
-        o=con.execute('SELECT po.*,p.name AS product_name,p.category_id,c.name AS category_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=?',(option_id,)).fetchone()
-        u_row = con.execute('SELECT is_seller FROM users WHERE user_id=?',(user_id,)).fetchone()
-    if not o: await q.edit_message_text('Gói sản phẩm không còn tồn tại.'); return
-    is_seller = bool(u_row and u_row['is_seller'])
-    current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
-    context.user_data['selected_option']=option_id
-    buttons=[
-        [InlineKeyboardButton('🗝 Mua 1 Key',callback_data=f'shop:qty:{option_id}:1'),
-         InlineKeyboardButton('🗝 Mua 2 Key',callback_data=f'shop:qty:{option_id}:2')],
-        [InlineKeyboardButton('🗝 Mua 3 Key',callback_data=f'shop:qty:{option_id}:3'),
-         InlineKeyboardButton('🗝 Mua 5 Key',callback_data=f'shop:qty:{option_id}:5')],
-        [InlineKeyboardButton('🗝 Mua 10 Key',callback_data=f'shop:qty:{option_id}:10')],
-        [InlineKeyboardButton('🔢 Mua số lượng khác',callback_data=f'shop:qty:{option_id}:other')],
-        [InlineKeyboardButton('📂 Quay Lại',callback_data=f"shop:cat:{o['category_id']}")]
-    ]
-    is_sh = is_aim_hack_product(o['product_name'])
-    if is_sh:
-        src_text = 'ShopHenry' if o.get('shophenry_product_id') else 'Chưa gán ID'
-    else:
-        src_text = f"Kho: {stock_for_option(option_id)}"
+async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update): return
+    await update.message.reply_text("🛠 BẢNG QUẢN TRỊ ADMIN", reply_markup=ADMIN_KB)
 
-    await q.edit_message_text(
-        f"🛒 {escape(o['product_name'])}\n⏳ {escape(o['duration_label'])}"
-        f"\n💵 Giá: {current_price:,}đ / key\n📦 Nguồn: {src_text}"
-        f"\n\n🔑 Chọn số lượng Key muốn mua để tiến hành thanh toán:",
-        reply_markup=InlineKeyboardMarkup(buttons),parse_mode='HTML')
-
-async def show_confirm(q, option_id, qty, context, user_id):
-    with db() as con:
-        o=con.execute('SELECT po.*,p.name AS product_name,p.category_id,c.name AS category_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=?',(option_id,)).fetchone()
-        u_row = con.execute('SELECT is_seller FROM users WHERE user_id=?',(user_id,)).fetchone()
-    if not o: await q.edit_message_text('Sản phẩm không còn tồn tại.'); return
-    is_seller = bool(u_row and u_row['is_seller'])
-    current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
-    total=current_price*qty
-    is_shophenry=is_aim_hack_product(o['product_name'])
-    context.user_data.update(pending_purchase={'option_id':option_id,'quantity':qty,'total':total})
-    payment_note = ('💳 Thanh toán: ShopHenry tự trừ số dư tài khoản nguồn. Bot không trừ số dư nội bộ.'
-                    if is_shophenry else '💳 Thanh toán: Trừ số dư tài khoản trong bot.')
-    await q.edit_message_text(f"🧾 XÁC NHẬN MUA HÀNG\n\n📁 Danh mục: {escape(o['category_name'])}\n📦 Sản phẩm: {escape(o['product_name'])}\n⏳ Thời hạn: {escape(o['duration_label'])}\n🔢 Số lượng: {qty}\n💰 Giá bán: {total:,}đ\n{payment_note}\n\nBạn xác nhận mua chứ?",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('✅ XÁC NHẬN MUA',callback_data='shop:confirm')],[InlineKeyboardButton('❌ HỦY',callback_data='shop:cancel')]]),parse_mode='HTML')
-
-def shophenry_buy(product_id, quantity):
-    if not SHOPHENRY_API_TOKEN:
-        raise RuntimeError('Thiếu SHOPHENRY_API_TOKEN trong biến môi trường.')
-    url = SHOPHENRY_API_URL + ('&' if '?' in SHOPHENRY_API_URL else '?') + 'action=buy'
-    body = json.dumps({'product_id': int(product_id), 'quantity': int(quantity)}).encode('utf-8')
-    req = urllib.request.Request(
-        url, data=body, method='POST',
-        headers={
-            'Authorization': f'Bearer {SHOPHENRY_API_TOKEN}',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            payload = json.loads(response.read().decode('utf-8'))
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode('utf-8', errors='replace')[:1000]
-        try:
-            payload = json.loads(raw)
-        except Exception:
-            raise RuntimeError(f'ShopHenry trả HTTP {exc.code}.')
-        if not payload.get('success'):
-            raise RuntimeError(str(payload.get('message') or f'ShopHenry từ chối đơn (HTTP {exc.code}).'))
-    if not isinstance(payload, dict) or not payload.get('success'):
-        message = payload.get('message', 'ShopHenry không xác nhận đơn hàng.') if isinstance(payload, dict) else 'Phản hồi ShopHenry không hợp lệ.'
-        raise RuntimeError(str(message))
-    data = payload.get('data') or {}
-    raw_keys = data.get('keys') or data.get('key')
-    if isinstance(raw_keys, list):
-        keys = [str(x).strip() for x in raw_keys if str(x).strip()]
-    elif isinstance(raw_keys, str):
-        keys = [line.strip() for line in raw_keys.replace('\r', '').split('\n') if line.strip()]
-        if len(keys) == 1 and quantity > 1 and ' | ' in keys[0]:
-            keys = [x.strip() for x in keys[0].split(' | ') if x.strip()]
-    else:
-        keys = []
-    order_code = str(data.get('order_code') or '')
-    if len(keys) != int(quantity):
-        raise RuntimeError(
-            'ShopHenry đã báo thành công nhưng số key trả về không khớp số lượng. '
-            + (f'Mã đơn: {order_code}. ' if order_code else '')
-            + 'Bot chưa trừ tiền khách; admin cần kiểm tra đơn ShopHenry trước khi cho mua lại.'
-        )
-    return '\n'.join(keys), order_code
-
-async def do_purchase(q, update, context):
-    pending = context.user_data.pop('pending_purchase', None)
-    if not pending:
-        await q.edit_message_text('Phiên mua hàng đã hết hoặc đã được xử lý. Hãy mở cửa hàng lại nếu muốn mua đơn mới.')
-        return
-
-    uid = update.effective_user.id
-    oid = pending['option_id']
-    qty = int(pending['quantity'])
-    con = db()
-    supplier_order = ''
-    key_text = ''
-    opt = None
-    total = 0
-    is_shophenry = False
-    try:
-        con.execute('BEGIN')
-        user = con.execute('SELECT balance,is_locked,is_seller FROM users WHERE user_id=? FOR UPDATE', (uid,)).fetchone()
-        opt = con.execute('''SELECT po.*,p.name AS product_name,p.category_id,
-            c.name AS category_name FROM product_options po
-            JOIN products p ON p.id::text=po.product_id::text
-            JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=?''', (oid,)).fetchone()
-        if not user or user['is_locked']:
-            con.rollback()
-            await q.edit_message_text('⛔ Tài khoản không thể mua hàng.')
-            return
-        if not opt:
-            con.rollback()
-            await q.edit_message_text('Sản phẩm không còn tồn tại.')
-            return
-
-        is_seller = bool(user['is_seller'])
-        current_price = opt['sell_price'] if (is_seller and opt['sell_price'] > 0) else opt['price']
-        total = current_price * qty
-        is_shophenry = is_aim_hack_product(opt['product_name'])
-
-        if is_shophenry:
-            if not opt.get('shophenry_product_id'):
-                con.rollback()
-                await q.edit_message_text(
-                    '⚠️ Sản phẩm Aim Hack chưa được gán product_id ShopHenry. Admin cần gán ID trước khi mua.'
-                )
-                return
-            try:
-                key_text, supplier_order = await asyncio.to_thread(
-                    shophenry_buy, opt['shophenry_product_id'], qty
-                )
-                keys = []
-            except Exception as api_error:
-                con.rollback()
-                log.warning('ShopHenry purchase failed for user=%s product=%s: %s',
-                            uid, opt['shophenry_product_id'], api_error)
-                await q.edit_message_text(
-                    '❌ ShopHenry không xác nhận được đơn.\n'
-                    + str(api_error)[:700]
-                    + '\n\nBot không trừ số dư nội bộ. Nếu API đã tạo đơn, hãy gửi mã đơn cho admin kiểm tra và không bấm mua lại.'
-                )
-                return
-        else:
-            if user['balance'] < total:
-                con.rollback()
-                await q.edit_message_text(
-                    f"❌ Số dư không đủ.\nCần: {total:,}đ\nHiện có: {user['balance']:,}đ"
-                )
-                return
-            keys = con.execute(
-                "SELECT id,key_value FROM product_keys WHERE option_id=? AND status='available' ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED",
-                (oid, qty)
-            ).fetchall()
-            if len(keys) < qty:
-                con.rollback()
-                await q.edit_message_text(f"❌ Kho không đủ key. Hiện còn {len(keys)} key.")
-                return
-            key_text = '\n'.join(k['key_value'] for k in keys)
-
-        stamp = now()
-        if not is_shophenry:
-            con.execute('UPDATE users SET balance=balance-? WHERE user_id=?', (total, uid))
-            for k in keys:
-                con.execute(
-                    "UPDATE product_keys SET status='sold',sold_to=?,sold_at=? WHERE id=?",
-                    (uid, stamp, k['id'])
-                )
-
-        con.execute(
-            '''INSERT INTO purchases(
-                user_id,category_name,product_name,duration_label,quantity,
-                unit_price,total_price,keys_text,created_at,supplier_order_code
-            ) VALUES(?,?,?,?,?,?,?,?,?,?)''',
-            (uid, opt['category_name'], opt['product_name'], opt['duration_label'],
-             qty, current_price, total, key_text, stamp, supplier_order or None)
-        )
-        con.commit()
-
-    except Exception:
-        con.rollback()
-        log.exception('Purchase record failed (ShopHenry order=%s)', supplier_order or 'n/a')
-        if is_shophenry and key_text:
-            await q.edit_message_text(
-                '⚠️ ShopHenry đã tạo đơn thành công nhưng bot không lưu được lịch sử. '
-                'Không mua lại đơn này.\n'
-                f'🧾 Mã đơn: {escape(supplier_order or "Chưa có mã đơn trong phản hồi API")}\n'
-                'Admin cần kiểm tra lịch sử đơn.',
-                parse_mode='HTML', reply_markup=inline_back('menu:home')
-            )
-            if q.message:
-                await q.message.reply_text('🔑 KEY CỦA BẠN:', reply_markup=USER_KB)
-                key_lines = key_text.splitlines()
-                chunk = []
-                chunk_len = 0
-                for line in key_lines:
-                    extra = len(line) + 1
-                    if chunk and chunk_len + extra > 3400:
-                        await q.message.reply_text(
-                            '<pre>' + escape('\n'.join(chunk)) + '</pre>',
-                            parse_mode='HTML', reply_markup=USER_KB
-                        )
-                        chunk = []
-                        chunk_len = 0
-                    chunk.append(line)
-                    chunk_len += extra
-                if chunk:
-                    await q.message.reply_text(
-                        '<pre>' + escape('\n'.join(chunk)) + '</pre>',
-                        parse_mode='HTML', reply_markup=USER_KB
-                    )
-        else:
-            if q.message:
-                await q.message.reply_text(
-                    '⚠️ Có lỗi khi ghi nhận đơn. Không bấm mua lại; hãy gửi mã đơn cho admin kiểm tra: '
-                    + (supplier_order or 'chưa nhận được mã đơn')
-                )
-        return
-    finally:
-        con.close()
-
-    success_msg = (
-        f"🥳 MUA KEY {opt['product_name'].upper()} {opt['duration_label'].upper()} THÀNH CÔNG\n\n"
-        f"Key :\n<pre>{escape(key_text)}</pre>\n\n"
-        f"HÃY THOÁT RA MENU CHÍNH ĐỂ LẤY CÁCH CÀI NHÉ!"
-    )
-    buy_again_kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton('🛒 Mua key tiếp', callback_data='shop:home')]
-    ])
-    
-    await q.edit_message_text(success_msg, parse_mode='HTML', reply_markup=buy_again_kb)
-
-async def user_history(q, uid):
-    with db() as con: rows = con.execute('SELECT * FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 20', (uid,)).fetchall()
-    if not rows:
-        await q.edit_message_text('📜 Bạn chưa có lịch sử mua hàng.', reply_markup=inline_back('menu:home'))
-        return
-    out = ['📜 LỊCH SỬ MUA HÀNG']
-    for r in rows: out.append(f"\n🧾 Đơn #{r['id']} · {r['created_at']}\n{r['product_name']} · {r['duration_label']}\nSố lượng: {r['quantity']} · {r['total_price']:,}đ")
-    await q.edit_message_text('\n'.join(out), reply_markup=inline_back('menu:home'))
-
-async def broadcast(bot, text, photo=None, status_message=None):
-    with db() as con: 
-        users = con.execute('SELECT user_id FROM users WHERE is_locked=FALSE').fetchall()
-    
-    total = len(users)
-    if total == 0:
-        if status_message:
-            try:
-                await status_message.edit_text('⚠️ Không có người dùng nào để gửi thông báo.', reply_markup=ADMIN_KB)
-            except Exception:
-                await bot.send_message(chat_id=status_message.chat_id, text='⚠️ Không có người dùng nào để gửi thông báo.')
-        return
-
-    success = 0
-    fail = 0
-    for idx, u in enumerate(users, 1):
-        try:
-            if photo:
-                await bot.send_photo(chat_id=u['user_id'], photo=photo, caption=text, parse_mode='HTML')
-            else:
-                await bot.send_message(chat_id=u['user_id'], text=text, parse_mode='HTML')
-            success += 1
-        except Exception:
-            fail += 1
-        await asyncio.sleep(0.05)
-
-    if status_message:
-        try:
-            await status_message.edit_text(f'📢 Đã gửi thông báo:\n- Thành công: {success}\n- Thất bại: {fail}', reply_markup=ADMIN_KB)
-        except Exception:
-            pass
-
-# Khởi tạo ứng dụng FastAPI
+# ==========================================
+# KHỞI TẠO VÀ CẤU HÌNH FASTAPI & MINI APP API
+# ==========================================
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -640,34 +265,119 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def verify_telegram_init_data(init_data: str) -> dict:
+    try:
+        parsed = dict(parse_qsl(init_data))
+        hash_check = parsed.pop('hash', None)
+        if not hash_check: return {}
+        data_check_string = '\n'.join(f"{k}={v}" for k, v in sorted(parsed.items()))
+        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        if calculated_hash == hash_check:
+            return json.loads(parsed.get('user', '{}'))
+    except Exception:
+        pass
+    return {}
+
 @app.get("/")
 def read_root():
-    return {"status": "running", "bot": "Jinny Cheat Bot"}
+    return FileResponse(BASE_DIR / "index.html")
+
+@app.get("/api/me")
+async def api_get_me(x_telegram_init_data: str = Header(None)):
+    user = verify_telegram_init_data(x_telegram_init_data or "")
+    if not user or "id" not in user:
+        raise HTTPException(status_code=401, detail="Xác thực Telegram thất bại.")
+    uid = user["id"]
+    with db() as con:
+        u_row = con.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()
+        balance = u_row['balance'] if u_row else 0
+        deposits = con.execute("SELECT id, amount, status, note, created_at FROM deposits WHERE user_id=? ORDER BY id DESC LIMIT 10", (uid,)).fetchall()
+        total_dep = con.execute("SELECT SUM(amount) AS total FROM deposits WHERE user_id=? AND status='approved'", (uid,)).fetchone()['total'] or 0
+    return {
+        "balance": balance,
+        "total_deposit": total_dep,
+        "deposits": [dict(d) for d in deposits]
+    }
+
+class DepositRequest(BaseModel):
+    amount: int
+
+@app.post("/api/deposits")
+async def api_create_deposit(req: DepositRequest, x_telegram_init_data: str = Header(None)):
+    user = verify_telegram_init_data(x_telegram_init_data or "")
+    if not user or "id" not in user:
+        raise HTTPException(status_code=401, detail="Xác thực Telegram thất bại.")
+    if req.amount < 2000:
+        raise HTTPException(status_code=400, detail="Số tiền tối thiểu là 2.000đ.")
+    uid = user["id"]
+    memo = f"{QR_MEMO_PREFIX}{uid}"
+    qr_url = make_qr_url(req.amount, memo)
+    stamp = now()
+    with db() as con:
+        cur = con.execute(
+            "INSERT INTO deposits(user_id, amount, status, note, created_at) VALUES(?, ?, 'pending', ?, ?) RETURNING id",
+            (uid, req.amount, memo, stamp)
+        )
+        deposit_id = cur.fetchone()["id"]
+        con.commit()
+    return {
+        "deposit_id": deposit_id,
+        "amount": req.amount,
+        "transfer_content": memo,
+        "qr_url": qr_url,
+        "expires_in": 300
+    }
+
+@app.post("/api/deposits/{deposit_id}/submitted")
+async def api_deposit_submitted(deposit_id: int, x_telegram_init_data: str = Header(None)):
+    user = verify_telegram_init_data(x_telegram_init_data or "")
+    if not user or "id" not in user:
+        raise HTTPException(status_code=401, detail="Xác thực Telegram thất bại.")
+    uid = user["id"]
+    full_name = user.get("first_name", "") + " " + user.get("last_name", "")
+    username = user.get("username", "Không có")
+    with db() as con:
+        dep = con.execute("SELECT * FROM deposits WHERE id=? AND user_id=?", (deposit_id, uid)).fetchone()
+        if not dep:
+            raise HTTPException(status_code=404, detail="Không tìm thấy giao dịch nạp tiền.")
+            
+    msg_to_admin = (
+        f"🔔 <b>CÓ YÊU CẦU NẠP TIỀN MỚI TỪ MINI APP</b>\n\n"
+        f"👤 Khách hàng: {escape(full_name.strip())} (@{username})\n"
+        f"🆔 ID: <code>{uid}</code>\n"
+        f"💰 Số tiền: <b>{dep['amount']:,}đ</b>\n"
+        f"📝 Nội dung CK: <code>{dep['note']}</code>\n"
+        f"🧾 Mã đơn: #{deposit_id}\n\n"
+        f"👉 Hãy kiểm tra ngân hàng và duyệt cộng tiền cho khách!"
+    )
+    for admin_id in ADMIN_IDS:
+        try:
+            url_api = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            data_body = json.dumps({"chat_id": admin_id, "text": msg_to_admin, "parse_mode": "HTML"}).encode('utf-8')
+            req = urllib.request.Request(url_api, data=data_body, headers={'Content-Type': 'application/json'}, method='POST')
+            urllib.request.urlopen(req, timeout=10)
+        except Exception as e:
+            log.error(f"Lỗi gửi tin tới Admin: {e}")
+    return {"status": "success", "message": "Đã gửi yêu cầu xác nhận tới Admin thành công!"}
 
 async def main():
-    # 1. Khởi tạo Database
     init_db()
     
-    # 2. Chạy Web Server FastAPI ngầm ở Thread riêng (Port 8080)
     def run_web():
         uvicorn.run(app, host="0.0.0.0", port=8080)
         
     threading.Thread(target=run_web, daemon=True).start()
-    log.info("Web Server FastAPI đã khởi động ngầm trên cổng 8080...")
+    log.info("Web Server FastAPI đã khởi động trên cổng 8080...")
 
-    # 3. Khởi tạo và chạy Telegram Bot chuẩn xác bằng asyncio
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin_cmd))
     
-    log.info("Bot đang khởi động chạy bằng Polling...")
-    
-    # Khởi động bot dạng async chuẩn xác không bị xung đột loop
     await application.initialize()
     await application.start()
     await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
     
-    # Giữ cho bot chạy liên tục
     stop_event = asyncio.Event()
     await stop_event.wait()
 
