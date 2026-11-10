@@ -6,6 +6,7 @@ import json
 import urllib.request
 import urllib.error
 import time
+import secrets
 import hmac
 import hashlib
 import threading
@@ -40,10 +41,10 @@ SHOPHENRY_API_TOKEN = os.getenv('SHOPHENRY_API_TOKEN', '').strip()
 SHOPHENRY_API_URL = os.getenv('SHOPHENRY_API_URL', 'https://shophenry.io.vn/api/seller.php').strip()
 ADMIN_IDS = {int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip().isdigit()}
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
-QR_BANK = os.getenv('QR_BANK', 'BIDV').strip()
-QR_ACCOUNT = os.getenv('QR_ACCOUNT', '8817735872').strip()
-QR_HOLDER = os.getenv('QR_HOLDER', 'LE MINH DUONG').strip()
-QR_TEMPLATE = os.getenv('QR_TEMPLATE', 'compact2').strip()
+QR_BANK = os.getenv('QR_BANK', 'VietinBank').strip()
+QR_ACCOUNT = os.getenv('QR_ACCOUNT', '102886882160').strip()
+QR_HOLDER = os.getenv('QR_HOLDER', 'BACH CONG HIEU HUY').strip()
+QR_TEMPLATE = os.getenv('QR_TEMPLATE', 'compact').strip()
 MINI_APP_URL = os.getenv('MINI_APP_URL', '').strip()
 QR_MEMO_PREFIX = 'NAP'
 DB_POOL = None
@@ -104,7 +105,10 @@ def db():
 
 def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def make_qr_url(amount, memo):
-    return f"https://img.vietqr.io/image/{QR_BANK}-{QR_ACCOUNT}-{QR_TEMPLATE}.png?amount={amount}&addInfo={memo}&accountName={urllib.parse.quote(QR_HOLDER)}"
+    # Dùng đúng mẫu VietQR người dùng cung cấp; mỗi đơn có nội dung riêng gắn ID + mã giao dịch.
+    params = urlencode({"bank": QR_BANK, "acc": QR_ACCOUNT, "template": QR_TEMPLATE,
+                        "des": memo, "amount": int(amount), "showinfo": "false", "holder": QR_HOLDER})
+    return f"https://vietqr.app/img?{params}" 
 
 def is_admin(update): return bool(update.effective_user and update.effective_user.id in ADMIN_IDS)
 def is_aim_hack_product(product_name):
@@ -135,7 +139,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS bot_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_at TEXT NOT NULL)",
         "INSERT INTO bot_settings(setting_key,setting_value,updated_at) VALUES('maintenance','off',NOW()::text) ON CONFLICT(setting_key) DO NOTHING",
         """CREATE TABLE IF NOT EXISTS categories (
-            id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_by BIGINT, created_at TEXT NOT NULL)""",
+            id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, guide_url TEXT, created_by BIGINT, created_at TEXT NOT NULL)""",
         """CREATE TABLE IF NOT EXISTS products (
             id SERIAL PRIMARY KEY, category_id BIGINT REFERENCES categories(id) ON DELETE CASCADE,
             name TEXT NOT NULL, created_by BIGINT, created_at TEXT NOT NULL)""",
@@ -157,11 +161,24 @@ def init_db():
             amount BIGINT NOT NULL, transaction_type TEXT NOT NULL,
             reference_id BIGINT, description TEXT, created_at TEXT NOT NULL,
             UNIQUE(transaction_type, reference_id))""",
+        # Bổ sung cột cho database cũ đã có bảng nhưng thiếu transaction_type.
+        "ALTER TABLE balance_transactions ADD COLUMN IF NOT EXISTS transaction_type TEXT",
+        "UPDATE balance_transactions SET transaction_type='legacy' WHERE transaction_type IS NULL OR transaction_type=''",
+        "ALTER TABLE balance_transactions ALTER COLUMN transaction_type SET DEFAULT 'adjustment'",
+        "ALTER TABLE balance_transactions ALTER COLUMN transaction_type SET NOT NULL",
+        "WITH duplicates AS (SELECT ctid, ROW_NUMBER() OVER (PARTITION BY transaction_type, reference_id ORDER BY id) AS rn FROM balance_transactions WHERE reference_id IS NOT NULL) UPDATE balance_transactions b SET reference_id=NULL FROM duplicates d WHERE b.ctid=d.ctid AND d.rn>1",
+        "CREATE UNIQUE INDEX IF NOT EXISTS balance_transactions_type_reference_uidx ON balance_transactions(transaction_type, reference_id)",
+        "ALTER TABLE categories ADD COLUMN IF NOT EXISTS guide_url TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_locked BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE product_keys ADD COLUMN IF NOT EXISTS sold_to BIGINT",
+        "ALTER TABLE product_keys ADD COLUMN IF NOT EXISTS sold_at TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_seller BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE product_options ADD COLUMN IF NOT EXISTS sell_price BIGINT NOT NULL DEFAULT 0",
         "ALTER TABLE product_options ADD COLUMN IF NOT EXISTS shophenry_product_id TEXT",
         "ALTER TABLE deposits ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ",
         "ALTER TABLE purchases ADD COLUMN IF NOT EXISTS supplier_order_code TEXT",
+        "ALTER TABLE purchases ADD COLUMN IF NOT EXISTS delivered_at TEXT",
+        "UPDATE purchases SET delivered_at=created_at WHERE delivered_at IS NULL",
     ]
     with db() as con:
         for index, sql in enumerate(statements, 1):
@@ -217,6 +234,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await message.reply_text(user_menu_text(user, balance), reply_markup=main_menu_markup(), parse_mode='HTML')
     if MINI_APP_URL:
         await message.reply_text("🛍 Bấm nút bên dưới để mở cửa hàng Mini App.", reply_markup=USER_KB)
+    # Nếu lần gửi key trước bị lỗi mạng, gửi lại khi người dùng mở bot.
+    with db() as con:
+        pending_keys = con.execute("SELECT id,product_name,duration_label,quantity,total_price,keys_text FROM purchases WHERE user_id=? AND delivered_at IS NULL ORDER BY id", (user.id,)).fetchall()
+    for purchase in pending_keys:
+        try:
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=(f"🔑 KEY ĐƠN HÀNG #{purchase['id']}\\n"
+                      f"{escape(purchase['product_name'])} – {escape(purchase['duration_label'])}\\n"
+                      f"Số lượng: {purchase['quantity']} | Tổng: {purchase['total_price']:,}đ\\n\\n"
+                      f"<code>{escape(purchase['keys_text'])}</code>"),
+                parse_mode='HTML')
+            with db() as con:
+                con.execute("UPDATE purchases SET delivered_at=? WHERE id=? AND user_id=?", (now(), purchase['id'], user.id))
+        except Exception:
+            log.exception("Cannot resend pending keys to %s", user.id)
 
 async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update): return
@@ -310,24 +343,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith('shop:buy:'):
         option_id = int(data.split(':')[2])
-        try:
-            with db() as con:
-                u = con.execute("SELECT balance,is_seller FROM users WHERE user_id=? FOR UPDATE", (user_id,)).fetchone()
-                opt = con.execute("SELECT po.*,p.name AS product_name,c.name AS category_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id=p.category_id WHERE po.id=? FOR UPDATE", (option_id,)).fetchone()
-                if not u or not opt: raise ValueError("Không tìm thấy tài khoản hoặc gói sản phẩm.")
-                if opt.get('shophenry_product_id'): raise ValueError("Gói nhà cung cấp ngoài chưa được bật mua trực tiếp.")
-                price = opt['sell_price'] if u['is_seller'] and opt['sell_price'] > 0 else opt['price']
-                if u['balance'] < price: raise ValueError("Số dư không đủ. Vui lòng nạp tiền.")
-                key = con.execute("SELECT id,key_value FROM product_keys WHERE option_id=? AND status='available' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED", (option_id,)).fetchone()
-                if not key: raise ValueError("Gói này hiện đã hết key.")
-                con.execute("UPDATE product_keys SET status='sold',sold_to=?,sold_at=? WHERE id=?", (user_id, now(), key['id']))
-                con.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (price, user_id))
-                cur=con.execute("INSERT INTO purchases(user_id,category_name,product_name,duration_label,quantity,unit_price,total_price,keys_text,created_at) VALUES(?,?,?,?,1,?,?,?,?) RETURNING id", (user_id,opt['category_name'],opt['product_name'],opt['duration_label'],price,price,key['key_value'],now()))
-                purchase_id=cur.fetchone()['id']
-                con.execute("INSERT INTO balance_transactions(user_id,amount,transaction_type,reference_id,description,created_at) VALUES(?,?,'purchase',?,?,?)", (user_id,-price,purchase_id,f"Mua {opt['product_name']}",now()))
-            await query.edit_message_text(f"✅ Mua thành công!\nĐơn #{purchase_id}\nKey: <code>{escape(key['key_value'])}</code>\nSố tiền: {price:,}đ", parse_mode='HTML', reply_markup=inline_back())
-        except Exception as exc:
-            await query.edit_message_text(f"❌ {escape(str(exc))}", parse_mode='HTML', reply_markup=inline_back())
+        with db() as con:
+            opt = con.execute("SELECT po.*,p.name AS product_name,c.name AS category_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id=p.category_id WHERE po.id=?", (option_id,)).fetchone()
+            stock = con.execute("SELECT COUNT(*) AS n FROM product_keys WHERE option_id=? AND status='available'", (option_id,)).fetchone()['n'] if opt else 0
+        if not opt:
+            await query.edit_message_text("Không tìm thấy gói sản phẩm.", reply_markup=inline_back())
+            return
+        if opt.get('shophenry_product_id'):
+            await query.edit_message_text("Gói nhà cung cấp ngoài hiện chưa hỗ trợ mua bằng kho key.", reply_markup=inline_back())
+            return
+        if stock < 1:
+            await query.edit_message_text("❌ Gói này hiện đã hết key.", reply_markup=inline_back())
+            return
+        context.user_data['waiting_buy_quantity'] = option_id
+        await query.edit_message_text(
+            f"🛒 {escape(opt['product_name'])} – {escape(opt['duration_label'])}\\nKho hiện có: {stock} key\\n\\nVui lòng nhập số lượng muốn mua (1-{min(stock,20)}):",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Hủy", callback_data=f"shop:option:{option_id}")]])
+        )
 
     elif data == 'menu:account':
         with db() as con:
@@ -435,9 +468,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rev = con.execute("SELECT SUM(total_price) AS total FROM purchases").fetchone()['total'] or 0
             try: await query.edit_message_text(f"📊 **THỐNG KÊ**\nThành viên: {uc}\nDoanh thu: {rev:,}đ", parse_mode='MARKDOWN', reply_markup=inline_back('menu:home'))
             except BadRequest: pass
+        elif action == 'broadcast':
+            context.user_data['admin_waiting'] = 'broadcast'
+            await query.message.reply_text("📢 Gửi nội dung thông báo muốn phát cho tất cả người dùng:")
+        elif action == 'usercheck':
+            context.user_data['admin_waiting'] = 'usercheck'
+            await query.message.reply_text("👤 Nhập Telegram ID người dùng cần kiểm tra:")
+        elif action == 'addproduct':
+            context.user_data['admin_waiting'] = 'addproduct'
+            await query.message.reply_text("➕ Gửi theo mẫu:\nTên danh mục | Tên sản phẩm | Thời hạn | Giá (VNĐ)\nVí dụ: iOS | Aim Hack | 30 ngày | 50000")
+        elif action == 'addguide':
+            context.user_data['admin_waiting'] = 'addguide'
+            await query.message.reply_text("🔗 Gửi theo mẫu: ID_DANH_MỤC | LINK_HƯỚNG_DẪN")
+        elif action == 'addkeys':
+            context.user_data['admin_waiting'] = 'addkeys'
+            await query.message.reply_text("🔑 Nhập ID gói sản phẩm (option_id) để thêm key:")
+        elif action == 'stock':
+            with db() as con:
+                rows = con.execute("""SELECT po.id,p.name,po.duration_label,
+                    (SELECT COUNT(*) FROM product_keys k WHERE k.option_id=po.id AND k.status='available') AS stock
+                    FROM product_options po JOIN products p ON p.id::text=po.product_id::text ORDER BY po.id""").fetchall()
+            text_stock = "📦 KHO KEY HIỆN TẠI\n\n" + ("\n".join(f"#{r['id']} {r['name']} ({r['duration_label']}): {r['stock']} key" for r in rows) if rows else "Chưa có gói sản phẩm.")
+            await query.message.reply_text(text_stock)
+        elif action == 'maintenance':
+            with db() as con:
+                row = con.execute("SELECT setting_value FROM bot_settings WHERE setting_key='maintenance'").fetchone()
+                new_value = 'off' if row and row['setting_value'] == 'on' else 'on'
+                con.execute("INSERT INTO bot_settings(setting_key,setting_value,updated_at) VALUES('maintenance',?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=EXCLUDED.updated_at", (new_value, now()))
+            await query.message.reply_text("🛠 Chế độ bảo trì: " + ("ĐÃ BẬT" if new_value == 'on' else "ĐÃ TẮT"))
         else:
-            try: await query.edit_message_text("🛠 Tính năng admin quản lý qua bot.", reply_markup=inline_back('menu:home'))
-            except BadRequest: pass
+            await query.message.reply_text("Không nhận diện được chức năng admin. Gửi /admin để mở lại bảng quản trị.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
@@ -455,7 +515,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with db() as con:
             cur = con.execute("INSERT INTO deposits(user_id, amount, status, note, created_at, expires_at) VALUES(?, ?, 'pending', '', ?, NOW() + INTERVAL '5 minutes') RETURNING id", (user.id, amount, stamp))
             dep_id = cur.fetchone()["id"]
-            memo = f"{QR_MEMO_PREFIX}{user.id}D{dep_id}"
+            memo = f"{QR_MEMO_PREFIX}{user.id}D{dep_id}{secrets.token_hex(2).upper()}"
             con.execute("UPDATE deposits SET note=? WHERE id=?", (memo, dep_id))
         qr_url = make_qr_url(amount, memo)
 
@@ -561,7 +621,7 @@ async def api_create_deposit(req: DepositRequest, x_telegram_init_data: str = He
     with db() as con:
         cur = con.execute("INSERT INTO deposits(user_id, amount, status, note, created_at, expires_at) VALUES(?, ?, 'pending', '', ?, NOW() + INTERVAL '5 minutes') RETURNING id", (uid, req.amount, now()))
         deposit_id = cur.fetchone()["id"]
-        memo = f"{QR_MEMO_PREFIX}{uid}D{deposit_id}"
+        memo = f"{QR_MEMO_PREFIX}{uid}D{deposit_id}{secrets.token_hex(2).upper()}"
         con.execute("UPDATE deposits SET note=? WHERE id=?", (memo, deposit_id))
     return {"deposit_id": deposit_id, "amount": req.amount, "transfer_content": memo, "qr_url": make_qr_url(req.amount, memo), "expires_in": 300}
 
@@ -622,7 +682,30 @@ async def api_purchase(req: PurchaseRequest, x_telegram_init_data: str = Header(
                 VALUES(?,?,?,?,?,?,?,?,?) RETURNING id""", (uid, opt['category_name'], opt['product_name'], opt['duration_label'], req.quantity, price, total, key_text, now()))
             purchase_id = cur.fetchone()['id']
             con.execute("INSERT INTO balance_transactions(user_id,amount,transaction_type,reference_id,description,created_at) VALUES(?,?,'purchase',?,?,?)", (uid, -total, purchase_id, f"Mua {opt['product_name']} - {opt['duration_label']}", now()))
-        return {"status": "success", "purchase_id": purchase_id, "total": total, "keys": [k['key_value'] for k in keys]}
+        # Gửi key trực tiếp trong cuộc trò chuyện bot sau khi transaction đã commit.
+        key_list = "\\n".join(f"• {escape(k['key_value'])}" for k in keys)
+        buyer_name = escape((user.get("first_name", "") + " " + user.get("last_name", "")).strip() or "Khách hàng")
+        bot_message = (f"🎉 <b>MUA KEY THÀNH CÔNG</b>\\n\\n"
+                       f"👤 {buyer_name}\\n🧾 Đơn hàng: <code>#{purchase_id}</code>\\n"
+                       f"📦 Sản phẩm: {escape(opt['product_name'])} - {escape(opt['duration_label'])}\\n"
+                       f"🔢 Số lượng: {req.quantity}\\n💰 Tổng tiền: {total:,}đ\\n\\n"
+                       f"🔑 <b>KEY CỦA BẠN:</b>\\n{key_list}")
+        try:
+            telegram_req = urllib.request.Request(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                data=json.dumps({"chat_id": uid, "text": bot_message, "parse_mode": "HTML"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(telegram_req, timeout=12) as response:
+                telegram_result = json.loads(response.read().decode("utf-8"))
+            if not telegram_result.get("ok"):
+                log.error("Telegram key delivery failed for user %s: %s", uid, telegram_result)
+            else:
+                with db() as con:
+                    con.execute("UPDATE purchases SET delivered_at=? WHERE id=?", (now(), purchase_id))
+        except Exception:
+            log.exception("Cannot deliver Mini App keys to Telegram user %s", uid)
+        return {"status": "success", "purchase_id": purchase_id, "total": total,
+                "quantity": req.quantity, "message": "Mua thành công. Hãy quay lại bot Telegram để nhận key."}
     except HTTPException:
         raise
     except Exception as exc:

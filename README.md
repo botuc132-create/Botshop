@@ -50,3 +50,11 @@ Trang HTML được phục vụ trực tiếp từ `bot.py` tại `/`. Các requ
 6. Thử duyệt lại cùng đơn: bot phải báo đã xử lý, không cộng lần hai.
 
 **Lưu ý:** không có webhook đối soát ngân hàng trong source này. Muốn tự động duyệt mà không cần admin phải tích hợp API/webhook chính thức của ngân hàng hoặc nhà cung cấp thanh toán.
+
+
+## Ghi chú bản sửa
+- Tự bổ sung cột `balance_transactions.transaction_type` cho PostgreSQL cũ khi khởi động.
+- QR dùng VietinBank / 102886882160 / BACH CONG HIEU HUY; nội dung chuyển khoản riêng theo ID và mã đơn.
+- Bot hỏi số lượng trước khi mua từ kho key.
+- Mua qua Mini App gửi thông báo và key vào chat bot.
+- QR tạo mã thanh toán; xác nhận tiền vẫn cần admin duyệt nếu chưa tích hợp webhook ngân hàng.

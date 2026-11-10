@@ -832,7 +832,7 @@
                     });
                     tg.showPopup({
                         title: 'Mua hàng thành công',
-                        message: `Đơn #${result.purchase_id} · ${Number(result.total).toLocaleString('vi-VN')}đ\\nKey: ${result.keys.join(', ')}`,
+                        message: `Đơn #${result.purchase_id} · ${Number(result.total).toLocaleString('vi-VN')}đ\\nMua thành công! Hãy quay lại bot Telegram để nhận key.`,
                         buttons: [{type: 'ok'}]
                     });
                     await refreshAccountData();
