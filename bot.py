@@ -349,6 +349,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not opt:
             await query.edit_message_text("Không tìm thấy gói sản phẩm.", reply_markup=inline_back())
             return
+        if opt.get('shophenry_product_id'):
+            await query.edit_message_text("Gói nhà cung cấp ngoài hiện chưa hỗ trợ mua bằng kho key.", reply_markup=inline_back())
+            return
         if stock < 1:
             await query.edit_message_text("❌ Gói này hiện đã hết key.", reply_markup=inline_back())
             return
@@ -534,12 +537,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-def ensure_store_available(uid):
-    if uid in ADMIN_IDS:
-        return
-    if maintenance_enabled():
-        raise HTTPException(status_code=503, detail="Cửa hàng đang bảo trì. Vui lòng quay lại sau.")
-
 def verify_telegram_init_data(init_data: str) -> dict:
     try:
         parsed = dict(parse_qsl(init_data))
@@ -562,7 +559,6 @@ async def api_get_me(x_telegram_init_data: str = Header(None)):
     user = verify_telegram_init_data(x_telegram_init_data or "")
     if not user or "id" not in user: raise HTTPException(status_code=401, detail="Không xác thực được Telegram.")
     uid = user["id"]
-    ensure_store_available(uid)
     with db() as con:
         row = con.execute("SELECT balance, is_seller FROM users WHERE user_id=?", (uid,)).fetchone()
         if not row:
@@ -583,7 +579,6 @@ async def api_catalog(x_telegram_init_data: str = Header(None)):
     user = verify_telegram_init_data(x_telegram_init_data or "")
     if not user or "id" not in user: raise HTTPException(status_code=401, detail="Mở Mini App từ Telegram.")
     uid = user["id"]
-    ensure_store_available(uid)
     with db() as con:
         user_row = con.execute("SELECT is_seller FROM users WHERE user_id=?", (uid,)).fetchone()
         if not user_row: raise HTTPException(status_code=404, detail="Hãy gửi /start cho bot trước.")
@@ -610,7 +605,7 @@ async def api_catalog(x_telegram_init_data: str = Header(None)):
         prod["options"].append({
             "id": r["option_id"], "duration": r["duration_label"],
             "price": int(price or 0), "stock": int(r["stock"] or 0),
-            "external": bool(r["shophenry_product_id"]) and int(r["stock"] or 0) == 0
+            "external": bool(r["shophenry_product_id"])
         })
     return {"categories": list(grouped.values())}
 
@@ -623,7 +618,6 @@ async def api_create_deposit(req: DepositRequest, x_telegram_init_data: str = He
     if not user or "id" not in user: raise HTTPException(status_code=401, detail="Mở Mini App từ Telegram.")
     if req.amount < 2000 or req.amount > 100000000: raise HTTPException(status_code=400, detail="Số tiền nạp phải từ 2.000đ đến 100.000.000đ.")
     uid = user["id"]
-    ensure_store_available(uid)
     with db() as con:
         cur = con.execute("INSERT INTO deposits(user_id, amount, status, note, created_at, expires_at) VALUES(?, ?, 'pending', '', ?, NOW() + INTERVAL '5 minutes') RETURNING id", (uid, req.amount, now()))
         deposit_id = cur.fetchone()["id"]
@@ -636,7 +630,6 @@ async def api_deposit_submitted(deposit_id: int, x_telegram_init_data: str = Hea
     user = verify_telegram_init_data(x_telegram_init_data or "")
     if not user or "id" not in user: raise HTTPException(status_code=401, detail="Mở Mini App từ Telegram.")
     uid = user["id"]
-    ensure_store_available(uid)
     with db() as con:
         dep = con.execute("SELECT * FROM deposits WHERE id=? AND user_id=?", (deposit_id, uid)).fetchone()
         if not dep: raise HTTPException(status_code=404, detail="Không tìm thấy giao dịch.")
@@ -665,7 +658,6 @@ async def api_purchase(req: PurchaseRequest, x_telegram_init_data: str = Header(
     if not user or "id" not in user: raise HTTPException(status_code=401, detail="Mở Mini App từ Telegram.")
     if req.quantity < 1 or req.quantity > 20: raise HTTPException(status_code=400, detail="Số lượng không hợp lệ (1-20).")
     uid = user["id"]
-    ensure_store_available(uid)
     try:
         with db() as con:
             u = con.execute("SELECT balance, is_seller FROM users WHERE user_id=? FOR UPDATE", (uid,)).fetchone()
@@ -676,6 +668,7 @@ async def api_purchase(req: PurchaseRequest, x_telegram_init_data: str = Header(
                 JOIN categories c ON c.id=p.category_id WHERE po.id=? FOR UPDATE
             """, (req.option_id,)).fetchone()
             if not opt: raise HTTPException(status_code=404, detail="Gói sản phẩm không tồn tại.")
+            if opt.get('shophenry_product_id'): raise HTTPException(status_code=400, detail="Sản phẩm nhà cung cấp ngoài chưa hỗ trợ thanh toán trực tiếp trong Mini App.")
             price = opt['sell_price'] if u['is_seller'] and opt['sell_price'] and opt['sell_price'] > 0 else opt['price']
             total = int(price) * req.quantity
             if int(u['balance']) < total: raise HTTPException(status_code=400, detail="Số dư không đủ. Vui lòng nạp tiền.")
