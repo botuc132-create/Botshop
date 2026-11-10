@@ -136,7 +136,6 @@ def init_db():
         "ALTER TABLE purchases ADD COLUMN IF NOT EXISTS supplier_order_code TEXT",
         "ALTER TABLE categories ADD COLUMN IF NOT EXISTS guide_url TEXT",
         "CREATE TABLE IF NOT EXISTS bot_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_at TEXT NOT NULL)",
-        # Chỉ tạo mặc định 'off' nếu chưa từng tồn tại, không ghi đè giá trị admin đang chọn
         "INSERT INTO bot_settings(setting_key,setting_value,updated_at) VALUES('maintenance','off',NOW()::text) ON CONFLICT(setting_key) DO NOTHING",
         """CREATE TABLE IF NOT EXISTS categories (
             id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_by BIGINT, created_at TEXT NOT NULL)""",
@@ -580,7 +579,6 @@ async def broadcast(bot, text, photo=None, status_message=None):
         except Exception as e:
             log.info('Broadcast skipped user %s: %s', uid, e)
 
-        # Cập nhật trạng thái hiển thị theo thời gian thực
         if status_message and index % 30 == 0:
             try:
                 await status_message.edit_text(f'🚀 Đang gửi thông báo... ({index}/{total} người dùng)')
@@ -655,11 +653,11 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith('adm:') or data.startswith('admin:') or data.startswith('user:'):
         if not is_admin(update): await q.edit_message_text('⛔ Không có quyền truy cập.'); return
     
-    # === XỬ LÝ BROADCAST XÁC NHẬN / HỦY (CƠ CHẾ AN TOÀN TRÁNH MẤT DỮ LIỆU) ===
+    # === XỬ LÝ BROADCAST XÁC NHẬN / HỦY (ĐÃ FIX LẤY CẢ ẢNH VÀ CHỮ CHUẨN XÁC) ===
     if data == 'adm:broadcast:confirm':
         pending_bc = context.user_data.pop('pending_broadcast', None)
         
-        # Nếu context bị mất do chuyển đổi trạng thái, bóc tách trực tiếp từ nội dung tin nhắn hiện tại
+        # Lấy trực tiếp từ thông tin tin nhắn xem trước (hỗ trợ cả ảnh và caption/text)
         if not pending_bc or not pending_bc.get('text'):
             msg_obj = q.message
             if msg_obj:
@@ -672,7 +670,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pending_bc = {'text': bc_text, 'photo': photo}
 
         if not pending_bc or not pending_bc.get('text'):
-            await q.edit_message_text('⚠️ Không tìm thấy nội dung thông báo. Vui lòng bấm tạo thông báo mới.', reply_markup=ADMIN_KB)
+            await q.edit_message_text('⚠️ Không tìm thấy nội dung thông báo. Vui lòng tạo lại thông báo từ đầu.', reply_markup=ADMIN_KB)
             return
 
         await broadcast(context.bot, pending_bc['text'], pending_bc.get('photo'), status_message=q.message)
