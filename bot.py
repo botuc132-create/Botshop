@@ -644,20 +644,35 @@ app.add_middleware(
 def read_root():
     return {"status": "running", "bot": "Jinny Cheat Bot"}
 
-if __name__ == "__main__":
+async def main():
+    # 1. Khởi tạo Database
     init_db()
     
-    # 1. Chạy Web Server FastAPI ngầm ở Thread riêng (Port 8080)
+    # 2. Chạy Web Server FastAPI ngầm ở Thread riêng (Port 8080)
     def run_web():
         uvicorn.run(app, host="0.0.0.0", port=8080)
         
     threading.Thread(target=run_web, daemon=True).start()
     log.info("Web Server FastAPI đã khởi động ngầm trên cổng 8080...")
 
-    # 2. Khởi tạo và chạy Telegram Bot chuẩn xác trên MainThread
+    # 3. Khởi tạo và chạy Telegram Bot chuẩn xác bằng asyncio
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin_cmd))
     
-    log.info("Bot đang khởi động chạy bằng Polling trên MainThread...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    log.info("Bot đang khởi động chạy bằng Polling...")
+    
+    # Khởi động bot dạng async chuẩn xác không bị xung đột loop
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    
+    # Giữ cho bot chạy liên tục
+    stop_event = asyncio.Event()
+    await stop_event.wait()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        log.info("Bot đã dừng.")
