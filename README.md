@@ -45,7 +45,7 @@ Trang HTML được phục vụ trực tiếp từ `bot.py` tại `/`. Các requ
 1. Gửi `/start` để tài khoản được tạo trong database.
 2. Mở Mini App từ bot, tạo đơn nạp tối thiểu 2.000đ.
 3. Bấm “Đã chuyển tiền” và kiểm tra admin nhận được thông báo.
-4. Admin xác nhận tiền trong ngân hàng rồi bấm DUYỆT.
+4. Admin xác nhận tiền trong ngân hàng rồi bấm DUYỆT. QR được tạo tự động, nhưng bản source hiện tại chưa có webhook/API đối soát ngân hàng nên bước cộng tiền vẫn cần Admin duyệt thủ công.
 5. Kiểm tra số dư, tổng nạp và lịch sử trong Mini App.
 6. Thử duyệt lại cùng đơn: bot phải báo đã xử lý, không cộng lần hai.
 

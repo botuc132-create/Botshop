@@ -230,57 +230,7 @@
 
                 <div class="section-header">Chọn gói</div>
                 
-                <div id="packages-list">
-                    <div class="package-card" onclick="selectPackage(this, '1 Giờ', 2000)">
-                        <div class="pkg-info">
-                            <h5>1 Giờ</h5>
-                            <p>Kho: <span style="color:var(--accent-blue)">12</span></p>
-                        </div>
-                        <div class="pkg-price-box">
-                            <p class="pkg-new-price">2.000đ</p>
-                        </div>
-                    </div>
-
-                    <div class="package-card" onclick="selectPackage(this, '12 Giờ', 5000)">
-                        <div class="pkg-info">
-                            <h5>12 Giờ</h5>
-                            <p>Kho: <span style="color:var(--accent-blue)">42</span></p>
-                        </div>
-                        <div class="pkg-price-box">
-                            <p class="pkg-new-price">5.000đ</p>
-                        </div>
-                    </div>
-
-                    <div class="package-card" onclick="selectPackage(this, '1 Ngày', 10000)">
-                        <div class="pkg-info">
-                            <h5>1 Ngày</h5>
-                            <p>Kho: <span style="color:var(--accent-blue)">47</span></p>
-                        </div>
-                        <div class="pkg-price-box">
-                            <p class="pkg-new-price">10.000đ</p>
-                        </div>
-                    </div>
-
-                    <div class="package-card" onclick="selectPackage(this, '7 Ngày', 25000)">
-                        <div class="pkg-info">
-                            <h5>7 Ngày</h5>
-                            <p>Kho: <span style="color:var(--accent-blue)">49</span></p>
-                        </div>
-                        <div class="pkg-price-box">
-                            <p class="pkg-new-price">25.000đ</p>
-                        </div>
-                    </div>
-
-                    <div class="package-card" onclick="selectPackage(this, '30 Ngày', 50000)">
-                        <div class="pkg-info">
-                            <h5>30 Ngày</h5>
-                            <p>Kho: <span style="color:var(--accent-blue)">47</span></p>
-                        </div>
-                        <div class="pkg-price-box">
-                            <p class="pkg-new-price">50.000đ</p>
-                        </div>
-                    </div>
-                </div>
+                <div id="packages-list"><p class="deposit-desc">Đang tải sản phẩm từ cửa hàng...</p></div>
 
                 <div class="checkout-box" id="checkout-box">
                     <div class="checkout-row">
@@ -390,10 +340,10 @@
             <div class="history-header">TỔNG QUAN TÀI KHOẢN</div>
             <div class="stats-grid">
                 <div class="stat-box">
-                    <p class="stat-val" id="total-keys-count">1</p><p class="stat-lbl">KEY ĐÃ MUA</p>
+                    <p class="stat-val" id="total-keys-count">0</p><p class="stat-lbl">KEY ĐÃ MUA</p>
                 </div>
                 <div class="stat-box">
-                    <p class="stat-val">209.000đ</p><p class="stat-lbl">TỔNG CHI</p>
+                    <p class="stat-val" id="total-spent-value">0đ</p><p class="stat-lbl">TỔNG CHI</p>
                 </div>
                 <div class="stat-box">
                     <p class="stat-val" id="total-deposit-value">0đ</p><p class="stat-lbl">TỔNG NẠP</p>
@@ -403,28 +353,14 @@
         <div class="ref-card">
             <div class="history-header">HỆ THỐNG GIỚI THIỆU (REF)</div>
             <p class="ref-desc">Nhận ngay <b style="color: var(--accent-blue);">0%</b> hoa hồng khi người được bạn mời nạp tiền thành công.</p>
-            <div class="ref-link-box" id="ref-link-text">https://t.me/jinnycheatbot?start=7776471599</div>
+            <div class="ref-link-box" id="ref-link-text">Đang tải link giới thiệu...</div>
             <button class="ref-btn" onclick="copyRefLink()">COPY LINK GIỚI THIỆU</button>
             <div class="ref-commission"><span>Tiền Hoa Hồng Đã Nhận:</span><span>0đ</span></div>
         </div>
         
         <div class="kho-card">
             <div class="history-header">KHO CỦA BẠN (LỊCH SỬ KEY ĐÃ MUA)</div>
-            <div id="user-keys-kho-list">
-                <div class="kho-item" style="display:block;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:13px; font-weight:750;">
-                        <span>Trollmodz X Phantom – 12 Giờ</span>
-                        <span style="background-color: #0d325c; color: var(--accent-blue); font-size: 11px; padding: 2px 8px; border-radius: 6px;">1</span>
-                    </div>
-                    <div class="key-row">
-                        <div>
-                            <div class="key-text">PHTM-827B-D448-02E4</div>
-                            <div class="key-date">Ngày mua: 2026-11-05 12:14</div>
-                        </div>
-                        <button class="copy-btn" onclick="copyKey('PHTM-827B-D448-02E4')">SAO CHÉP</button>
-                    </div>
-                </div>
-            </div>
+            <div id="user-keys-kho-list"><p class="deposit-desc">Chưa có key đã mua.</p></div>
         </div>
     </div>
 
@@ -497,18 +433,61 @@
                 if (!data.deposits || !data.deposits.length) {
                     history.innerHTML = '<p class="deposit-desc">Chưa có giao dịch nạp tiền.</p>';
                 }
+                const purchases = data.purchases || [];
+                const kho = document.getElementById('user-keys-kho-list');
+                kho.innerHTML = '';
+                let keyCount = 0;
+                purchases.forEach(p => {
+                    const keys = String(p.keys_text || '').split('\n').filter(Boolean);
+                    keyCount += Number(p.quantity || keys.length || 0);
+                    const group = document.createElement('div');
+                    group.className = 'kho-item';
+                    const heading = document.createElement('div');
+                    heading.style.cssText = 'font-size:13px;font-weight:750;margin-bottom:8px;';
+                    heading.textContent = `${p.product_name} – ${p.duration_label} · ${Number(p.total_price || 0).toLocaleString('vi-VN')}đ`;
+                    group.appendChild(heading);
+                    keys.forEach(key => {
+                        const row = document.createElement('div');
+                        row.className = 'key-row';
+                        const info = document.createElement('div');
+                        const value = document.createElement('div');
+                        value.className = 'key-text';
+                        value.textContent = key;
+                        const date = document.createElement('div');
+                        date.className = 'key-date';
+                        date.textContent = 'Ngày mua: ' + (p.created_at || '');
+                        info.append(value, date);
+                        const copy = document.createElement('button');
+                        copy.className = 'copy-btn';
+                        copy.textContent = 'SAO CHÉP';
+                        copy.onclick = () => copyKey(key);
+                        row.append(info, copy);
+                        group.appendChild(row);
+                    });
+                    kho.appendChild(group);
+                });
+                if (!purchases.length) kho.innerHTML = '<p class="deposit-desc">Chưa có key đã mua.</p>';
+                document.getElementById('total-keys-count').textContent = keyCount;
+                document.getElementById('total-spent-value').textContent = Number(data.total_spent || 0).toLocaleString('vi-VN') + 'đ';
+                if (data.is_admin) {
+                    const role = document.getElementById('user-role-badge');
+                    role.style.display = 'inline-block';
+                    role.textContent = 'ADMIN';
+                    role.className = 'role-badge admin';
+                    document.getElementById('admin-panel-section').style.display = 'block';
+                    document.getElementById('btn-edit-ff-img').style.display = 'block';
+                }
             } catch (error) {
                 console.warn('Không thể đồng bộ tài khoản:', error);
             }
         }
 
-        const ADMIN_IDS = [7776471599];
+        const ADMIN_IDS = [];
 
         let ffAppIconUrl = '';
-        let categoriesData = [
-            { id: 1, name: "NovaX Client", icon: "", badge: "NX" },
-            { id: 2, name: "Migul - VietNam Version", icon: "", badge: "VN" }
-        ];
+        let categoriesData = [];
+        let selectedCategory = null;
+        let selectedOptionId = null;
 
         let activeEditingCatId = null;
         let isEditingAppImage = false;
@@ -561,28 +540,14 @@
             let adminPanel = document.getElementById('admin-panel-section');
             let editAppBtn = document.getElementById('btn-edit-ff-img');
 
-            if (ADMIN_IDS.includes(user.id)) {
-                roleBadge.innerText = "ADMIN";
-                roleBadge.className = "role-badge admin";
-                adminPanel.style.display = "block";
-                editAppBtn.style.display = "block";
-            } else {
-                let isReseller = false;
-                if (isReseller) {
-                    roleBadge.innerText = "RESELLER";
-                    roleBadge.className = "role-badge reseller";
-                } else {
-                    roleBadge.style.display = "none";
-                }
-            }
+            roleBadge.style.display = "none";
+            adminPanel.style.display = "none";
+            editAppBtn.style.display = "none";
         } else {
-            document.getElementById('username').innerText = "Huy Me Sống Tệ!..";
-            document.getElementById('userid').innerText = "7776471599";
-            document.getElementById('user-avatar').src = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces";
-            document.getElementById('user-role-badge').innerText = "ADMIN";
-            document.getElementById('user-role-badge').className = "role-badge admin";
-            document.getElementById('admin-panel-section').style.display = "block";
-            document.getElementById('btn-edit-ff-img').style.display = "block";
+            document.getElementById('username').innerText = "Mở Mini App từ bot";
+            document.getElementById('userid').innerText = "---";
+            document.getElementById('user-avatar').style.display = "none";
+            document.getElementById('user-role-badge').style.display = "none";
         }
 
         function switchTab(tabName) {
@@ -594,13 +559,27 @@
             window.scrollTo(0, 0);
         }
 
-        function selectAppToLoadCategories(appName, element) {
+        async function selectAppToLoadCategories(appName, element) {
             tg.HapticFeedback?.selectionChanged();
             document.querySelectorAll('.app-item').forEach(el => el.classList.remove('selected'));
             element.classList.add('selected');
-
             document.getElementById('select-category-container').style.display = 'block';
+            await loadCatalog();
             renderCategoriesList();
+            if (!categoriesData.length) tg.showAlert('Shop chưa có danh mục/sản phẩm được cấu hình trong bot.');
+            else openCategoryModal('buy');
+        }
+
+        async function loadCatalog() {
+            try {
+                const data = await apiRequest('/api/catalog');
+                categoriesData = data.categories || [];
+                document.getElementById('category-count').textContent = categoriesData.length + ' mục';
+                renderCategoriesList();
+            } catch (e) {
+                console.warn('Không tải được danh mục:', e);
+                document.getElementById('packages-list').innerHTML = '<p class="deposit-desc">Không tải được cửa hàng. Hãy mở Mini App từ bot và kiểm tra cấu hình database.</p>';
+            }
         }
 
         function renderCategoriesList() {
@@ -612,13 +591,13 @@
                 if (cat.icon && cat.icon.trim() !== '') {
                     iconHtml = `<img src="${cat.icon}" class="select-cat-icon">`;
                 } else {
-                    iconHtml = `<div style="width:38px; height:38px; background:#0d2847; border-radius:10px; display:flex; justify-content:center; align-items:center; color:var(--accent-blue); font-weight:bold;">${cat.badge}</div>`;
+                    iconHtml = `<div style="width:38px; height:38px; background:#0d2847; border-radius:10px; display:flex; justify-content:center; align-items:center; color:var(--accent-blue); font-weight:bold;">${(cat.badge || cat.name.slice(0,2)).toUpperCase()}</div>`;
                 }
 
                 let item = document.createElement('div');
                 item.className = 'category-option-item';
                 item.innerHTML = `
-                    <div style="display:flex; align-items:center; gap:12px; width:100%;" onclick="handleCategorySelectionClick('${cat.name}')">
+                    <div style="display:flex; align-items:center; gap:12px; width:100%;" onclick="handleCategorySelectionClick(${cat.id})">
                         ${iconHtml}
                         <div>
                             <h5 style="margin:0; font-size:13px; font-weight:750; color:white;">${cat.name}</h5>
@@ -641,7 +620,7 @@
                 if (cat.icon && cat.icon.trim() !== '') {
                     iconHtml = `<img src="${cat.icon}" class="select-cat-icon">`;
                 } else {
-                    iconHtml = `<div style="width:38px; height:38px; background:#0d2847; border-radius:10px; display:flex; justify-content:center; align-items:center; color:var(--accent-blue); font-weight:bold;">${cat.badge}</div>`;
+                    iconHtml = `<div style="width:38px; height:38px; background:#0d2847; border-radius:10px; display:flex; justify-content:center; align-items:center; color:var(--accent-blue); font-weight:bold;">${(cat.badge || cat.name.slice(0,2)).toUpperCase()}</div>`;
                 }
 
                 let item = document.createElement('div');
@@ -681,7 +660,10 @@
             document.getElementById('admin-category-modal').classList.remove('open');
         }
 
-        function handleCategorySelectionClick(catName) {
+        function handleCategorySelectionClick(catId) {
+            const chosen = categoriesData.find(c => String(c.id) === String(catId));
+            if (!chosen) return;
+            const catName = chosen.name;
             if (modalInteractionMode === 'admin_add_key_cat') {
                 adminSelectedCatForAddKey = catName;
                 closeCategoryModal();
@@ -706,16 +688,44 @@
         function chooseCategory(catName) {
             tg.HapticFeedback?.notificationOccurred('success');
             document.getElementById('selected-cat-name').innerText = catName;
-            
-            let selectedCat = categoriesData.find(c => c.name === catName);
-            if (selectedCat && selectedCat.icon && selectedCat.icon.trim() !== '') {
-                let imgEl = document.getElementById('current-selected-icon');
-                imgEl.src = selectedCat.icon;
-                imgEl.style.display = 'block';
+            selectedCategory = categoriesData.find(c => c.name === catName) || null;
+            selectedOptionId = null;
+            selectedPkgName = '';
+            const list = document.getElementById('packages-list');
+            list.innerHTML = '';
+            if (!selectedCategory || !selectedCategory.products.length) {
+                list.innerHTML = '<p class="deposit-desc">Danh mục này chưa có sản phẩm.</p>';
+            } else {
+                selectedCategory.products.forEach(product => {
+                    const heading = document.createElement('div');
+                    heading.className = 'section-header';
+                    heading.textContent = product.name;
+                    list.appendChild(heading);
+                    (product.options || []).forEach(option => {
+                        const card = document.createElement('div');
+                        card.className = 'package-card';
+                        const info = document.createElement('div');
+                        info.className = 'pkg-info';
+                        const name = document.createElement('h5');
+                        name.textContent = option.duration;
+                        const stock = document.createElement('p');
+                        stock.textContent = 'Kho: ' + option.stock;
+                        info.append(name, stock);
+                        const priceBox = document.createElement('div');
+                        priceBox.className = 'pkg-price-box';
+                        const price = document.createElement('p');
+                        price.className = 'pkg-new-price';
+                        price.textContent = Number(option.price).toLocaleString('vi-VN') + 'đ';
+                        priceBox.appendChild(price);
+                        card.append(info, priceBox);
+                        card.onclick = () => selectPackage(card, option.duration, option.price, option.id, product.name);
+                        list.appendChild(card);
+                    });
+                });
             }
-
             closeCategoryModal();
             document.getElementById('packages-section').style.display = 'block';
+            document.getElementById('checkout-box').style.display = 'none';
         }
 
         function triggerAppFilePicker() {
@@ -760,20 +770,21 @@
 
         function adminAction(actionType) {
             if (actionType === 'stats') {
-                tg.showAlert('Thống kê: Tổng doanh thu hệ thống: 209.000đ | Tổng số key đã bán: 55');
+                tg.showAlert('Vui lòng xem thống kê thực tế trong bảng quản trị bot.');
             } else if (actionType === 'broadcast') {
                 let msg = prompt('Nhập nội dung thông báo gửi đến toàn bộ người dùng:');
                 if (msg) tg.showAlert('Đã phát thông báo thành công tới tất cả người dùng!');
             }
         }
 
-        function selectPackage(element, pkgName, price) {
+        function selectPackage(element, pkgName, price, optionId, productName) {
             tg.HapticFeedback?.selectionChanged();
             document.querySelectorAll('.package-card').forEach(el => el.classList.remove('selected'));
             element.classList.add('selected');
 
-            selectedPkgName = pkgName;
-            selectedPkgPrice = price;
+            selectedPkgName = (productName ? productName + ' – ' : '') + pkgName;
+            selectedOptionId = optionId;
+            selectedPkgPrice = Number(price);
             currentQty = 1;
             document.getElementById('qty-number').innerText = currentQty;
 
@@ -803,16 +814,35 @@
             tg.showAlert('Mã voucher không hợp lệ hoặc đã hết hạn.');
         }
 
-        function executeBuy() {
-            if (!selectedPkgName) return;
-            let total = selectedPkgPrice * currentQty;
-            tg.showConfirm(`Xác nhận mua gói ${selectedPkgName} (Số lượng: ${currentQty}) với giá ${total.toLocaleString()}đ?`, function(confirmed) {
-                if (confirmed) {
+        async function executeBuy() {
+            if (!selectedOptionId) {
+                tg.showAlert('Vui lòng chọn gói sản phẩm từ danh mục.');
+                return;
+            }
+            const total = selectedPkgPrice * currentQty;
+            tg.showConfirm(`Xác nhận mua ${selectedPkgName} (Số lượng: ${currentQty}) với giá ${total.toLocaleString('vi-VN')}đ?`, async function(confirmed) {
+                if (!confirmed) return;
+                const button = document.getElementById('buy-action-btn');
+                button.disabled = true;
+                button.textContent = 'ĐANG XỬ LÝ...';
+                try {
+                    const result = await apiRequest('/api/purchases', {
+                        method: 'POST',
+                        body: JSON.stringify({option_id: selectedOptionId, quantity: currentQty})
+                    });
                     tg.showPopup({
-                        title: 'Thành công',
-                        message: 'Đã mua hàng thành công! Key đã được lưu vào Kho Key Của Bạn.',
+                        title: 'Mua hàng thành công',
+                        message: `Đơn #${result.purchase_id} · ${Number(result.total).toLocaleString('vi-VN')}đ\\nKey: ${result.keys.join(', ')}`,
                         buttons: [{type: 'ok'}]
                     });
+                    await refreshAccountData();
+                    await loadCatalog();
+                    document.getElementById('checkout-box').style.display = 'none';
+                } catch (error) {
+                    tg.showAlert(error.message);
+                } finally {
+                    button.disabled = false;
+                    button.textContent = `MUA NGAY (${(selectedPkgPrice * currentQty).toLocaleString('vi-VN')}đ)`;
                 }
             });
         }
@@ -916,6 +946,7 @@
         }
 
         refreshAccountData();
+        loadCatalog();
         if (balanceRefreshInterval) clearInterval(balanceRefreshInterval);
         balanceRefreshInterval = setInterval(refreshAccountData, 15000);
     </script>
