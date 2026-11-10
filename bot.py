@@ -630,7 +630,7 @@ async def broadcast(bot, text, photo=None, status_message=None):
         except Exception:
             pass
 
-# Khởi tạo ứng dụng FastAPI và chạy ở PORT 8080
+# Khởi tạo ứng dụng FastAPI
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -644,20 +644,20 @@ app.add_middleware(
 def read_root():
     return {"status": "running", "bot": "Jinny Cheat Bot"}
 
-def run_web():
-    uvicorn.run(app, host="0.0.0.0", port=8080)
-
 if __name__ == "__main__":
     init_db()
-    # Chạy Web Server FastAPI song song ở luồng riêng
-    threading.Thread(target=run_web, daemon=True).start()
     
-    # Khởi chạy Telegram Bot
+    # 1. Chạy Web Server FastAPI ngầm ở Thread riêng (Port 8080)
+    def run_web():
+        uvicorn.run(app, host="0.0.0.0", port=8080)
+        
+    threading.Thread(target=run_web, daemon=True).start()
+    log.info("Web Server FastAPI đã khởi động ngầm trên cổng 8080...")
+
+    # 2. Khởi tạo và chạy Telegram Bot chuẩn xác trên MainThread
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin_cmd))
     
-    # Thêm các Handler phụ trợ ở đây nếu có...
-    
-    log.info("Bot đang khởi động chạy bằng Polling...")
+    log.info("Bot đang khởi động chạy bằng Polling trên MainThread...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
