@@ -632,6 +632,24 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith('adm:') or data.startswith('admin:') or data.startswith('user:'):
         if not is_admin(update): await q.edit_message_text('⛔ Không có quyền truy cập.'); return
     
+    # === XỬ LÝ BROADCAST XÁC NHẬN / HỦY ===
+    if data == 'adm:broadcast:confirm':
+        pending_bc = context.user_data.pop('pending_broadcast', None)
+        if not pending_bc:
+            await q.edit_message_text('⚠️ Không tìm thấy nội dung thông báo chờ gửi hoặc phiên đã hết hạn.', reply_markup=ADMIN_KB)
+            return
+        await q.edit_message_text('🚀 Đang tiến hành gửi thông báo đến người dùng...')
+        n = await broadcast(context.bot, pending_bc['text'], pending_bc.get('photo'))
+        if q.message:
+            await q.message.reply_text(f'✅ Đã gửi thông báo thành công tới {n} người dùng.', reply_markup=ADMIN_KB)
+        return
+
+    elif data == 'adm:broadcast:cancel':
+        context.user_data.pop('pending_broadcast', None)
+        await q.edit_message_text('❌ Đã hủy gửi thông báo.', reply_markup=ADMIN_KB)
+        return
+    # =======================================
+
     if data == 'menu:guide':
         cats = get_categories()
         if not cats:
@@ -684,18 +702,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💼 Tổng số dư ví hiện tại của user: {total_balance:,}đ"
         )
         await q.edit_message_text(txt, reply_markup=inline_back('adm:menu'), parse_mode='HTML')
-    elif data == 'adm:broadcast:confirm':
-        pending_bc = context.user_data.pop('pending_broadcast', None)
-        if not pending_bc:
-            await q.edit_message_text('⚠️ Không tìm thấy nội dung thông báo chờ gửi.', reply_markup=ADMIN_KB)
-            return
-        await q.edit_message_text('🚀 Đang tiến hành gửi thông báo đến người dùng...')
-        n = await broadcast(context.bot, pending_bc['text'], pending_bc.get('photo'))
-        if q.message:
-            await q.message.reply_text(f'✅ Đã gửi thông báo thành công tới {n} người dùng.', reply_markup=ADMIN_KB)
-    elif data == 'adm:broadcast:cancel':
-        context.user_data.pop('pending_broadcast', None)
-        await q.edit_message_text('❌ Đã hủy gửi thông báo.', reply_markup=ADMIN_KB)
     elif data.startswith('deposit:submitted:'):
         deposit_id = int(data.split(':')[2])
         with db() as con:
