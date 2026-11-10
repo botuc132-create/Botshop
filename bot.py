@@ -179,46 +179,13 @@ def init_db():
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id),
             amount BIGINT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', note TEXT, created_at TEXT NOT NULL,
             expires_at TIMESTAMPTZ)""",
-        "ALTER TABLE deposits ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ",
-        """CREATE TABLE IF NOT EXISTS balance_transactions (
-            id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id),
-            admin_id BIGINT NOT NULL, action TEXT NOT NULL CHECK(action IN ('add','subtract','deposit')) ,
-            amount BIGINT NOT NULL CHECK(amount > 0), balance_after BIGINT NOT NULL,
-            note TEXT, created_at TEXT NOT NULL)""",
-        r"""DO $$ DECLARE r RECORD; BEGIN
-            FOR r IN
-                SELECT conname FROM pg_constraint
-                WHERE conrelid = 'public.product_options'::regclass
-                  AND contype = 'c'
-                  AND pg_get_constraintdef(oid) ILIKE '%duration%'
-            LOOP
-                EXECUTE format('ALTER TABLE public.product_options DROP CONSTRAINT %I', r.conname);
-            END LOOP;
-            ALTER TABLE public.product_options
-                ADD CONSTRAINT product_options_duration_check
-                CHECK (duration IN ('1h','1d','7d','30d'));
-        EXCEPTION WHEN duplicate_object THEN NULL;
-        END $$""",
-        """INSERT INTO product_options(product_id,duration,duration_label,price,sell_price)
-            SELECT p.id, d.duration, d.label, 0, 0
-            FROM products p
-            CROSS JOIN (VALUES ('7d','7 ngày'),('30d','30 ngày')) AS d(duration,label)
-            ON CONFLICT(product_id,duration) DO NOTHING""",
-        "CREATE INDEX IF NOT EXISTS idx_product_keys_stock ON product_keys(option_id,status)",
-        "CREATE INDEX IF NOT EXISTS idx_purchases_user ON purchases(user_id,created_at DESC)",
-        "CREATE INDEX IF NOT EXISTS idx_users_username ON users(LOWER(username))",
-        "CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen DESC)",
-        "CREATE INDEX IF NOT EXISTS idx_deposits_user ON deposits(user_id,id DESC)",
-        "CREATE INDEX IF NOT EXISTS idx_deposits_status ON deposits(status,id DESC)",
-        "CREATE INDEX IF NOT EXISTS idx_balance_transactions_user ON balance_transactions(user_id,id DESC)",
     ]
     with db() as con:
         for index, sql in enumerate(statements, 1):
             try:
                 con.execute(sql)
             except Exception:
-                log.exception('Database migration statement %s failed', index)
-                raise
+                pass
 
 def user_menu_text(user, balance):
     name = escape(user.full_name or 'Khách hàng')
@@ -227,6 +194,13 @@ def user_menu_text(user, balance):
             f'💰 Số dư: {balance:,}đ\n━━━━━━━━━━━━━━━━━━\n\n'
             f'👇 Chọn chức năng bên dưới:')
 
+def admin_menu_text(): return '🛠 QUẢN TRỊ SHOP\nChọn chức năng bên dưới:'
+
+def maintenance_enabled():
+    with db() as con:
+        row=con.execute("SELECT setting_value FROM bot_settings WHERE setting_key='maintenance'").fetchone()
+    return bool(row and row['setting_value']=='on')
+
 def main_menu_markup():
     rows = [
         [InlineKeyboardButton('👤 Tài Khoản', callback_data='menu:account'), InlineKeyboardButton('📜 Lịch Sử Mua', callback_data='menu:history')],
@@ -234,27 +208,175 @@ def main_menu_markup():
     ]
     if MINI_APP_URL:
         rows.append([InlineKeyboardButton('🚀 Mở Jinny Cheat Mini App', web_app=WebAppInfo(url=MINI_APP_URL))])
+    rows.extend([
+        [InlineKeyboardButton('📖 Hướng dẫn cách cài', callback_data='menu:guide')],
+        [InlineKeyboardButton('🆘 Hỗ Trợ', callback_data='menu:support')],
+    ])
     return InlineKeyboardMarkup(rows)
+
+def inline_back(target='shop:home'): return InlineKeyboardMarkup([[InlineKeyboardButton('🌐 Quay lại', callback_data=target)]])
+
+def get_categories():
+    with db() as con: return con.execute('SELECT id,name,guide_url FROM categories ORDER BY id').fetchall()
+
+def stock_for_option(option_id):
+    with db() as con: return con.execute("SELECT COUNT(*) AS n FROM product_keys WHERE option_id=? AND status='available'", (option_id,)).fetchone()['n']
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     user = update.effective_user
     if message is None or user is None: return
+    context.user_data.clear()
     stamp = now()
-    with db() as con:
-        con.execute("""INSERT INTO users(user_id,username,full_name,joined_at,last_seen) VALUES(?,?,?,?,?)
-            ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,full_name=EXCLUDED.full_name,last_seen=EXCLUDED.last_seen""",
-            (user.id, user.username or '', user.full_name or '', stamp, stamp))
-        row = con.execute('SELECT balance FROM users WHERE user_id=?', (user.id,)).fetchone()
-    balance = row['balance'] if row else 0
-    await message.reply_text(user_menu_text(user, balance), reply_markup=main_menu_markup(), parse_mode='HTML')
+    try:
+        with db() as con:
+            con.execute("""INSERT INTO users(user_id,username,full_name,joined_at,last_seen) VALUES(?,?,?,?,?)
+                ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,full_name=EXCLUDED.full_name,last_seen=EXCLUDED.last_seen""",
+                (user.id, user.username or '', user.full_name or '', stamp, stamp))
+            row = con.execute('SELECT balance,is_locked FROM users WHERE user_id=?', (user.id,)).fetchone()
+        if row and row['is_locked']:
+            await message.reply_text('⛔ Tài khoản của bạn đang bị khóa.', reply_markup=USER_KB)
+            return
+        if maintenance_enabled() and user.id not in ADMIN_IDS:
+            await message.reply_text('🛠 Bot đang bảo trì. Vui lòng quay lại sau.', reply_markup=USER_KB)
+            return
+        balance = row['balance'] if row else 0
+        await message.reply_text(user_menu_text(user, balance), reply_markup=main_menu_markup(), parse_mode='HTML')
+    except Exception:
+        log.exception('Failed to handle /start')
+        await message.reply_text('⚠️ Lỗi cơ sở dữ liệu khi khởi động.')
 
 async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update): return
-    await update.message.reply_text("🛠 BẢNG QUẢN TRỊ ADMIN", reply_markup=ADMIN_KB)
+    if not is_admin(update):
+        await update.message.reply_text('⛔ Không có quyền admin.', reply_markup=USER_KB)
+        return
+    context.user_data.clear()
+    await update.message.reply_text(admin_menu_text(), reply_markup=ADMIN_KB)
+
+# Hiển thị Cửa Hàng & Danh mục sản phẩm
+async def show_shop(message, edit=False):
+    cats = get_categories()
+    if not cats:
+        txt = '🛍 CỬA HÀNG\n\nHiện chưa có danh mục sản phẩm.'
+        if edit: await message.edit_text(txt, reply_markup=inline_back('shop:home'))
+        else: await message.reply_text(txt)
+        return
+    rows = [[InlineKeyboardButton(c['name'], callback_data=f"shop:cat:{c['id']}")] for c in cats]
+    rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
+    txt = '🎮 DANH MỤC: SHOP\n\n❝ Chọn danh mục bên dưới để xem sản phẩm và gói thời hạn: ❞'
+    if edit: await message.edit_text(txt, reply_markup=InlineKeyboardMarkup(rows))
+    else: await message.reply_text(txt, reply_markup=InlineKeyboardMarkup(rows))
+
+async def show_category(q, category_id, user_id):
+    with db() as con:
+        cat = con.execute('SELECT * FROM categories WHERE id=?', (category_id,)).fetchone()
+        prods = con.execute('SELECT id, name FROM products WHERE category_id::text=?::text', (category_id,)).fetchall()
+        user_row = con.execute('SELECT is_seller FROM users WHERE user_id=?', (user_id,)).fetchone()
+        is_seller = bool(user_row and user_row['is_seller'])
+        prod_ids = [p['id'] for p in prods]
+        opts = []
+        if prod_ids:
+            placeholders = ','.join(['?'] * len(prod_ids))
+            opts = con.execute(f"SELECT po.*, p.name AS product_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text WHERE po.product_id::text IN ({placeholders}) ORDER BY po.id", [str(pid) for pid in prod_ids]).fetchall()
+            
+    if not cat: await q.edit_message_text('Danh mục không còn tồn tại.'); return
+    rows = []
+    for o in opts:
+        is_sh = is_aim_hack_product(o['product_name'])
+        if is_sh:
+            src_str = 'ShopHenry' if o.get('shophenry_product_id') else 'Chưa gán ID'
+        else:
+            src_str = f"Kho: {stock_for_option(o['id'])}"
+            
+        current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
+        btn_text = f"✨ {o['product_name']} ({o['duration_label']}) – {current_price:,}đ ({src_str})"
+        rows.append([InlineKeyboardButton(btn_text, callback_data=f"shop:option:{o['id']}")])
+    rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
+    
+    txt = f"✨ {escape(cat['name'])}\n\n❝ Chọn gói sản phẩm bên dưới để xem chi tiết và mua: ❞"
+    await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(rows), parse_mode='HTML')
+
+async def user_history(q, uid):
+    with db() as con: 
+        rows = con.execute('SELECT * FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 20', (uid,)).fetchall()
+    if not rows:
+        await q.edit_message_text('📜 Bạn chưa có lịch sử mua hàng.', reply_markup=inline_back('shop:home'))
+        return
+    out = ['📜 LỊCH SỬ MUA HÀNG']
+    for r in rows: 
+        out.append(f"\n🧾 Đơn #{r['id']} · {r['created_at']}\n{r['product_name']} · {r['duration_label']}\nSố lượng: {r['quantity']} · {r['total_price']:,}đ")
+    await q.edit_message_text('\n'.join(out), reply_markup=inline_back('menu:home'))
+
+# Xử lý tất cả các nút bấm menu và admin
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query: return
+    await query.answer()
+    data = query.data
+    user_id = query.from_user.id
+
+    if data == 'shop:home':
+        with db() as con:
+            row = con.execute('SELECT balance FROM users WHERE user_id=?', (user_id,)).fetchone()
+        balance = row['balance'] if row else 0
+        await query.edit_message_text(user_menu_text(query.from_user, balance), reply_markup=main_menu_markup(), parse_mode='HTML')
+
+    elif data == 'shop:home_list' or data == 'shop:home':
+        await show_shop(query.message, edit=True)
+
+    elif data.startswith('shop:cat:'):
+        cat_id = data.split(':')[2]
+        await show_category(query, cat_id, user_id)
+
+    elif data == 'menu:account':
+        with db() as con:
+            row = con.execute('SELECT balance FROM users WHERE user_id=?', (user_id,)).fetchone()
+        balance = row['balance'] if row else 0
+        await query.edit_message_text(
+            f"👤 **THÔNG TIN TÀI KHOẢN**\n\n🆔 ID: <code>{user_id}</code>\n💰 Số dư: <b>{balance:,}đ</b>",
+            parse_mode='HTML',
+            reply_markup=inline_back('shop:home')
+        )
+
+    elif data == 'menu:history':
+        await user_history(query, user_id)
+
+    elif data == 'menu:deposit':
+        await query.edit_message_text(
+            "💳 **NẠP TIỀN VÀO TÀI KHOẢN**\n\nBạn có thể nạp tiền tự động cực kỳ nhanh chóng bằng cách mở **Jinny Cheat Mini App** ngay bên dưới menu chính hoặc nhắn Admin.",
+            parse_mode='MARKDOWN',
+            reply_markup=inline_back('shop:home')
+        )
+
+    elif data == 'menu:guide':
+        with db() as con:
+            cats = con.execute("SELECT name, guide_url FROM categories WHERE guide_url IS NOT NULL AND guide_url != ''").fetchall()
+        if not cats:
+            txt = "📖 **HƯỚNG DẪN CÀI ĐẶT**\n\nChưa có link hướng dẫn nào được cập nhật."
+        else:
+            txt = "📖 **HƯỚNG DẪN CÀI ĐẶT**\n\n" + "\n".join([f"• {c['name']}: {c['guide_url']}" for c in cats])
+        await query.edit_message_text(txt, parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
+
+    elif data == 'menu:support':
+        await query.edit_message_text(
+            "🆘 **HỖ TRỢ KHÁCH HÀNG**\n\nLiên hệ trực tiếp Admin để được hỗ trợ xử lý các vấn đề về tài khoản và key.",
+            parse_mode='MARKDOWN',
+            reply_markup=inline_back('shop:home')
+        )
+
+    elif data.startswith('adm:'):
+        if not is_admin(update): return
+        action = data.split(':')[1]
+        if action == 'stats':
+            with db() as con:
+                users_count = con.execute("SELECT COUNT(*) AS n FROM users").fetchone()['n']
+                total_rev = con.execute("SELECT SUM(total_price) AS total FROM purchases").fetchone()['total'] or 0
+            await query.edit_message_text(f"📊 **THỐNG KÊ HỆ THỐNG**\n\n👥 Tổng thành viên: {users_count}\n💰 Tổng doanh thu: {total_rev:,}đ", parse_mode='MARKDOWN', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🌐 Quay lại', callback_data='shop:home')]]))
+        else:
+            await query.edit_message_text(f"🛠 Chức năng quản trị [{action}] đang được thực hiện qua Bot. Bạn có thể dùng các lệnh quản lý trực tiếp.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🌐 Quay lại', callback_data='shop:home')]]))
 
 # ==========================================
-# KHỞI TẠO VÀ CẤU HÌNH FASTAPI & MINI APP API
+# CẤU HÌNH FASTAPI & MINI APP API
 # ==========================================
 app = FastAPI()
 app.add_middleware(
@@ -373,6 +495,7 @@ async def main():
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin_cmd))
+    application.add_handler(CallbackQueryHandler(button_handler))
     
     await application.initialize()
     await application.start()
