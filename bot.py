@@ -29,8 +29,9 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / '.env')
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
+from telegram.error import BadRequest
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, ContextTypes,
+    Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters,
 )
 
 DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
@@ -192,7 +193,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         con.execute("""INSERT INTO users(user_id,username,full_name,joined_at,last_seen) VALUES(?,?,?,?,?)
             ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,full_name=EXCLUDED.full_name,last_seen=EXCLUDED.last_seen""",
             (user.id, user.username or '', user.full_name or '', stamp, stamp))
-        row = con.execute('SELECT balance FROM users WHERE user_id=?', (user.id,)).fetchone()
+        row = con.execute('SELECT balance,is_locked FROM users WHERE user_id=?', (user.id,)).fetchone()
     balance = row['balance'] if row else 0
     await message.reply_text(user_menu_text(user, balance), reply_markup=main_menu_markup(), parse_mode='HTML')
 
@@ -202,16 +203,20 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_shop(q, edit=False):
     cats = get_categories()
+    txt = '🎮 DANH MỤC: SHOP\n\n❝ Chọn danh mục bên dưới để xem sản phẩm và gói thời hạn: ❞'
     if not cats:
         txt = '🛍 CỬA HÀNG\n\nHiện chưa có danh mục sản phẩm.'
-        if edit: await q.edit_message_text(txt, reply_markup=inline_back('shop:home'))
-        else: await q.message.reply_text(txt)
-        return
-    rows = [[InlineKeyboardButton(c['name'], callback_data=f"shop:cat:{c['id']}")] for c in cats]
-    rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
-    txt = '🎮 DANH MỤC: SHOP\n\n❝ Chọn danh mục bên dưới để xem sản phẩm và gói thời hạn: ❞'
-    if edit: await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(rows))
-    else: await q.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(rows))
+        rows = [[InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')]]
+    else:
+        rows = [[InlineKeyboardButton(c['name'], callback_data=f"shop:cat:{c['id']}")] for c in cats]
+        rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
+    
+    markup = InlineKeyboardMarkup(rows)
+    try:
+        if edit: await q.edit_message_text(txt, reply_markup=markup)
+        else: await q.message.reply_text(txt, reply_markup=markup)
+    except BadRequest:
+        pass
 
 async def show_category(q, category_id, user_id):
     with db() as con:
@@ -225,7 +230,10 @@ async def show_category(q, category_id, user_id):
             placeholders = ','.join(['?'] * len(prod_ids))
             opts = con.execute(f"SELECT po.*, p.name AS product_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text WHERE po.product_id::text IN ({placeholders}) ORDER BY po.id", [str(pid) for pid in prod_ids]).fetchall()
             
-    if not cat: await q.edit_message_text('Danh mục không còn tồn tại.'); return
+    if not cat: 
+        try: await q.edit_message_text('Danh mục không còn tồn tại.')
+        except BadRequest: pass
+        return
     rows = []
     for o in opts:
         is_sh = is_aim_hack_product(o['product_name'])
@@ -236,12 +244,18 @@ async def show_category(q, category_id, user_id):
     rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
     
     txt = f"✨ {escape(cat['name'])}\n\n❝ Chọn gói sản phẩm bên dưới để mua: ❞"
-    await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(rows), parse_mode='HTML')
+    try:
+        await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(rows), parse_mode='HTML')
+    except BadRequest:
+        pass
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query: return
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception:
+        pass
     data = query.data
     user_id = query.from_user.id
 
@@ -249,7 +263,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with db() as con:
             row = con.execute('SELECT balance FROM users WHERE user_id=?', (user_id,)).fetchone()
         balance = row['balance'] if row else 0
-        await query.edit_message_text(user_menu_text(query.from_user, balance), reply_markup=main_menu_markup(), parse_mode='HTML')
+        try:
+            await query.edit_message_text(user_menu_text(query.from_user, balance), reply_markup=main_menu_markup(), parse_mode='HTML')
+        except BadRequest:
+            pass
 
     elif data == 'shop:home_list' or data == 'shop:home_menu':
         await show_shop(query, edit=True)
@@ -262,30 +279,67 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with db() as con:
             row = con.execute('SELECT balance FROM users WHERE user_id=?', (user_id,)).fetchone()
         balance = row['balance'] if row else 0
-        await query.edit_message_text(f"👤 **TÀI KHOẢN**\n\nID: <code>{user_id}</code>\nSố dư: <b>{balance:,}đ</b>", parse_mode='HTML', reply_markup=inline_back('shop:home'))
+        try:
+            await query.edit_message_text(f"👤 **TÀI KHOẢN**\n\nID: <code>{user_id}</code>\nSố dư: <b>{balance:,}đ</b>", parse_mode='HTML', reply_markup=inline_back('shop:home'))
+        except BadRequest:
+            pass
 
     elif data == 'menu:history':
         with db() as con: 
             rows = con.execute('SELECT * FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 10', (user_id,)).fetchall()
         if not rows:
-            await query.edit_message_text('📜 Bạn chưa có lịch sử mua hàng.', reply_markup=inline_back('shop:home'))
+            try: await query.edit_message_text('📜 Bạn chưa có lịch sử mua hàng.', reply_markup=inline_back('shop:home'))
+            except BadRequest: pass
             return
         out = ['📜 **LỊCH SỬ MUA HÀNG**']
         for r in rows: 
             out.append(f"\n• Đơn #{r['id']}: {r['product_name']} ({r['duration_label']}) - {r['total_price']:,}đ")
-        await query.edit_message_text('\n'.join(out), parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
+        try:
+            await query.edit_message_text('\n'.join(out), parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
+        except BadRequest:
+            pass
 
     elif data == 'menu:deposit':
-        await query.edit_message_text("💳 **NẠP TIỀN**\nHãy mở **Jinny Cheat Mini App** ở menu chính để nạp tiền tự động qua QR.", parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
+        context.user_data['waiting_deposit_amount'] = True
+        try:
+            await query.edit_message_text(
+                "💳 **NẠP TIỀN TỰ ĐỘNG QUA QR**\n\n"
+                "Vui lòng nhập số tiền bạn muốn nạp (ví dụ: `50000`):",
+                parse_mode='MARKDOWN',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('❌ Hủy', callback_data='shop:home')]])
+            )
+        except BadRequest:
+            pass
+
+    elif data.startswith('dep:confirm:'):
+        dep_id = data.split(':')[2]
+        with db() as con:
+            dep = con.execute("SELECT * FROM deposits WHERE id=?", (dep_id,)).fetchone()
+        if dep:
+            msg_admin = f"🔔 **YÊU CẦU XÁC NHẬN NẠP TIỀN TỪ BOT**\nID: <code>{user_id}</code>\nSố tiền: <b>{dep['amount']:,}đ</b>\nNội dung: <code>{dep['note']}</code>"
+            for aid in ADMIN_IDS:
+                try:
+                    req = urllib.request.Request(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data=json.dumps({"chat_id": aid, "text": msg_admin, "parse_mode": "HTML"}).encode('utf-8'), headers={'Content-Type': 'application/json'}, method='POST')
+                    urllib.request.urlopen(req, timeout=10)
+                except Exception: pass
+            try:
+                await query.edit_message_text("✅ Đã gửi yêu cầu xác nhận tới Admin thành công! Vui lòng chờ kiểm tra.", reply_markup=inline_back('shop:home'))
+            except BadRequest:
+                pass
+        else:
+            try: await query.edit_message_text("❌ Không tìm thấy giao dịch.", reply_markup=inline_back('shop:home'))
+            except BadRequest: pass
 
     elif data == 'menu:guide':
         with db() as con:
             cats = con.execute("SELECT name, guide_url FROM categories WHERE guide_url IS NOT NULL AND guide_url != ''").fetchall()
         txt = "📖 **HƯỚNG DẪN CÀI ĐẶT**\n\n" + ("\n".join([f"• {c['name']}: {c['guide_url']}" for c in cats]) if cats else "Chưa có hướng dẫn.")
-        await query.edit_message_text(txt, parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
+        try: await query.edit_message_text(txt, parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
+        except BadRequest: pass
 
     elif data == 'menu:support':
-        await query.edit_message_text("🆘 **HỖ TRỢ**\nLiên hệ Admin để được giải đáp thắc mắc.", parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
+        try: await query.edit_message_text("🆘 **HỖ TRỢ**\nLiên hệ Admin để được giải đáp thắc mắc.", parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
+        except BadRequest: pass
 
     elif data.startswith('adm:'):
         if not is_admin(update): return
@@ -294,9 +348,43 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with db() as con:
                 uc = con.execute("SELECT COUNT(*) AS n FROM users").fetchone()['n']
                 rev = con.execute("SELECT SUM(total_price) AS total FROM purchases").fetchone()['total'] or 0
-            await query.edit_message_text(f"📊 **THỐNG KÊ**\nThành viên: {uc}\nDoanh thu: {rev:,}đ", parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
+            try: await query.edit_message_text(f"📊 **THỐNG KÊ**\nThành viên: {uc}\nDoanh thu: {rev:,}đ", parse_mode='MARKDOWN', reply_markup=inline_back('shop:home'))
+            except BadRequest: pass
         else:
-            await query.edit_message_text("🛠 Tính năng admin quản lý qua bot.", reply_markup=inline_back('shop:home'))
+            try: await query.edit_message_text("🛠 Tính năng admin quản lý qua bot.", reply_markup=inline_back('shop:home'))
+            except BadRequest: pass
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    user = update.effective_user
+    if not message or not message.text: return
+
+    if context.user_data.get('waiting_deposit_amount'):
+        context.user_data['waiting_deposit_amount'] = False
+        text = message.text.strip().replace(',', '').replace('.', '')
+        if not text.isdigit() or int(text) < 2000:
+            await message.reply_text("⚠️ Số tiền không hợp lệ! Vui lòng nhập tối thiểu từ 2.000đ trở lên.", reply_markup=USER_KB)
+            return
+        amount = int(text)
+        memo = f"{QR_MEMO_PREFIX}{user.id}"
+        qr_url = make_qr_url(amount, memo)
+        stamp = now()
+        with db() as con:
+            cur = con.execute("INSERT INTO deposits(user_id, amount, status, note, created_at) VALUES(?, ?, 'pending', ?, ?) RETURNING id", (user.id, amount, memo, stamp))
+            dep_id = cur.fetchone()["id"]
+            con.commit()
+
+        caption = (
+            f"💳 **THANH TOÁN MÃ QR**\n\n"
+            f"💰 Số tiền: <b>{amount:,}đ</b>\n"
+            f"📝 Nội dung CK: <code>{memo}</code>\n\n"
+            f"👉 Quét mã QR bên trên để thanh toán. Sau khi chuyển khoản xong, bấm nút **Xác Minh** bên dưới để báo Admin."
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton('✅ Đã Chuyển Tiền (Xác Minh)', callback_data=f'dep:confirm:{dep_id}')],
+            [InlineKeyboardButton('❌ Hủy', callback_data='shop:home')]
+        ])
+        await message.reply_photo(photo=qr_url, caption=caption, parse_mode='HTML', reply_markup=kb)
 
 # ==========================================
 # CẤU HÌNH FASTAPI & MINI APP API
@@ -358,7 +446,7 @@ async def api_deposit_submitted(deposit_id: int, x_telegram_init_data: str = Hea
     with db() as con:
         dep = con.execute("SELECT * FROM deposits WHERE id=? AND user_id=?", (deposit_id, uid)).fetchone()
         if not dep: raise HTTPException(status_code=404)
-    msg = f"🔔 **YÊU CẦU NẠP TIỀN**\nID: <code>{uid}</code>\nTên: {escape(full_name)}\nSố tiền: <b>{dep['amount']:,}đ</b>\nMã: <code>{dep['note']}</code>"
+    msg = f"🔔 **YÊU CẦU NẠP TIỀN TỪ MINI APP**\nID: <code>{uid}</code>\nTên: {escape(full_name)}\nSố tiền: <b>{dep['amount']:,}đ</b>\nMã: <code>{dep['note']}</code>"
     for aid in ADMIN_IDS:
         try:
             req = urllib.request.Request(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data=json.dumps({"chat_id": aid, "text": msg, "parse_mode": "HTML"}).encode('utf-8'), headers={'Content-Type': 'application/json'}, method='POST')
@@ -374,6 +462,7 @@ async def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin_cmd))
     application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     await application.initialize()
     await application.start()
