@@ -26,7 +26,7 @@ from psycopg_pool import ConnectionPool
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / '.env')
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, MessageEntity, WebAppInfo
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, MessageEntity, WebAppInfo, MenuButtonWebApp
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ContextTypes, filters,
@@ -77,6 +77,21 @@ USER_KB = (
     )
     if MINI_APP_URL.startswith('https://') else ReplyKeyboardRemove()
 )
+
+async def configure_miniapp_menu_button(application):
+    if not MINI_APP_URL.startswith('https://'):
+        log.warning('Mini App menu button skipped: MINI_APP_URL must be HTTPS')
+        return
+    try:
+        await application.bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text='Mua Key',
+                web_app=WebAppInfo(url=MINI_APP_URL),
+            )
+        )
+        log.info('Default Telegram Mini App menu button configured')
+    except Exception:
+        log.exception('Could not configure Telegram Mini App menu button')
 
 ADMIN_KB = InlineKeyboardMarkup([
     [quick_button('Thông báo', callback_data='adm:broadcast')],
@@ -1785,7 +1800,7 @@ def main():
     except Exception:
         log.exception('Database initialization failed')
         raise SystemExit('Database initialization failed; check Paella Logs')
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(configure_miniapp_menu_button).build()
     telegram_application = app
     app.add_handler(CommandHandler('start', start)); app.add_handler(CommandHandler('admin', admin_cmd))
     app.add_handler(CallbackQueryHandler(callback)); app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO & ~filters.COMMAND, text_handler))
