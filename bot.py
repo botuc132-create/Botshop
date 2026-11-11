@@ -46,6 +46,7 @@ QR_SHOWINFO = os.getenv('QR_SHOWINFO', 'false').strip().lower()
 QR_MEMO_PREFIX = 'SEVQR'
 QR_MEMO_SUFFIX = os.getenv('QR_MEMO_SUFFIX', 'NAP').strip().upper() or 'NAP'
 MINI_APP_URL = os.getenv('MINI_APP_URL', '').strip()
+CUSTOM_BUTTON_EMOJI_ID = '6168207816042487487'
 DB_POOL = None
 logging.basicConfig(format='%(asctime)s | %(levelname)s | %(name)s | %(message)s', level=LOG_LEVEL)
 log = logging.getLogger('key_shop_bot')
@@ -54,30 +55,49 @@ web_app = FastAPI(title='Jinny Cheat Mini App API')
 telegram_application = None
 
 
+# Keep python-telegram-bot 21.6; api_kwargs passes newer Telegram Bot API fields.
+def quick_button(text, style='success', **kwargs):
+    return InlineKeyboardButton(
+        text,
+        api_kwargs={
+            'style': style,
+            'icon_custom_emoji_id': CUSTOM_BUTTON_EMOJI_ID,
+        },
+        **kwargs,
+    )
+
+
 USER_KB = (
     ReplyKeyboardMarkup(
-        [[KeyboardButton('🛍 Mua Key', web_app=WebAppInfo(url=MINI_APP_URL))]],
+        [[KeyboardButton(
+            'Mua Key',
+            web_app=WebAppInfo(url=MINI_APP_URL),
+            api_kwargs={
+                'style': 'success',
+                'icon_custom_emoji_id': CUSTOM_BUTTON_EMOJI_ID,
+            },
+        )]],
         resize_keyboard=True, is_persistent=True
     )
     if MINI_APP_URL.startswith('https://') else ReplyKeyboardRemove()
 )
 
 ADMIN_KB = InlineKeyboardMarkup([
-    [InlineKeyboardButton('📢 Thông báo', callback_data='adm:broadcast')],
-    [InlineKeyboardButton('📊 Thống kê hệ thống', callback_data='adm:stats')],
-    [InlineKeyboardButton('👤 Thông tin người dùng', callback_data='adm:usercheck')],
-    [InlineKeyboardButton('➕ Thêm sản phẩm', callback_data='adm:addproduct')],
-    [InlineKeyboardButton('🔗 Thêm link cách cài', callback_data='adm:addguide')],
-    [InlineKeyboardButton('🔗 Gán ID ShopHenry (Aim Hack)', callback_data='adm:mapshop')],
-    [InlineKeyboardButton('✏️ Sửa giá / thời hạn', callback_data='adm:editproduct')],
-    [InlineKeyboardButton('💰 Sửa giá Sell', callback_data='adm:editsellprice')],
-    [InlineKeyboardButton('📋 Chi tiết sản phẩm', callback_data='adm:detailproduct')],
-    [InlineKeyboardButton('📝 Đổi tên danh mục ngoài', callback_data='adm:renamecat')],
-    [InlineKeyboardButton('🗑 Xóa sản phẩm', callback_data='adm:delproduct')],
-    [InlineKeyboardButton('🔑 Thêm key sản phẩm', callback_data='adm:addkeys')],
-    [InlineKeyboardButton('📦 Kiểm tra kho', callback_data='adm:stock')],
-    [InlineKeyboardButton('🛠 Bảo trì: Bật / Tắt', callback_data='adm:maintenance')],
-    [InlineKeyboardButton('✨ Kho Emoji NewsEmoji', callback_data='adm:emoji')],
+    [quick_button('Thông báo', callback_data='adm:broadcast')],
+    [quick_button('Thống kê hệ thống', callback_data='adm:stats')],
+    [quick_button('Thông tin người dùng', callback_data='adm:usercheck')],
+    [quick_button('Thêm sản phẩm', callback_data='adm:addproduct')],
+    [quick_button('Thêm link cách cài', callback_data='adm:addguide')],
+    [quick_button('Gán ID ShopHenry (Aim Hack)', callback_data='adm:mapshop')],
+    [quick_button('Sửa giá / thời hạn', callback_data='adm:editproduct')],
+    [quick_button('Sửa giá Sell', callback_data='adm:editsellprice')],
+    [quick_button('Chi tiết sản phẩm', callback_data='adm:detailproduct')],
+    [quick_button('Đổi tên danh mục ngoài', callback_data='adm:renamecat')],
+    [quick_button('Xóa sản phẩm', style='danger', callback_data='adm:delproduct')],
+    [quick_button('Thêm key sản phẩm', callback_data='adm:addkeys')],
+    [quick_button('Kiểm tra kho', callback_data='adm:stock')],
+    [quick_button('Bảo trì: Bật / Tắt', callback_data='adm:maintenance')],
+    [quick_button('Kho Emoji NewsEmoji', callback_data='adm:emoji')],
 ])
 
 DURATIONS = {'1h': '1 giờ', '1d': '1 ngày', '7d': '7 ngày', '30d': '30 ngày'}
@@ -253,12 +273,12 @@ def maintenance_enabled():
 def main_menu_markup():
     rows = []
     if MINI_APP_URL.startswith('https://'):
-        rows.append([InlineKeyboardButton('🛍 Mở Mini App – Giao dịch nhanh', web_app=WebAppInfo(url=MINI_APP_URL))])
+        rows.append([quick_button('Mở Mini App – Giao dịch nhanh', web_app=WebAppInfo(url=MINI_APP_URL))])
     rows.extend([
-        [InlineKeyboardButton('👤 Tài Khoản', callback_data='menu:account'), InlineKeyboardButton('📜 Lịch Sử Mua', callback_data='menu:history')],
-        [InlineKeyboardButton('🛍 Cửa Hàng', callback_data='shop:home'), InlineKeyboardButton('💳 Nạp Tiền', callback_data='menu:deposit')],
-        [InlineKeyboardButton('📖 Hướng dẫn cách cài', callback_data='menu:guide')],
-        [InlineKeyboardButton('🆘 Hỗ Trợ', callback_data='menu:support')],
+        [quick_button('Tài Khoản', callback_data='menu:account'), quick_button('Lịch Sử Mua', callback_data='menu:history')],
+        [quick_button('Cửa Hàng', callback_data='shop:home'), quick_button('Nạp Tiền', callback_data='menu:deposit')],
+        [quick_button('Hướng dẫn cách cài', callback_data='menu:guide')],
+        [quick_button('Hỗ Trợ', callback_data='menu:support')],
     ])
     return InlineKeyboardMarkup(rows)
 
@@ -324,7 +344,7 @@ async def show_shop(message, edit=False):
         if edit: await message.edit_text(txt, reply_markup=inline_back('shop:home'))
         else: await message.reply_text(txt)
         return
-    rows = [[InlineKeyboardButton(c['name'], callback_data=f"shop:cat:{c['id']}")] for c in cats]
+    rows = [[quick_button(c['name'], callback_data=f"shop:cat:{c['id']}")] for c in cats]
     rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
     txt = '🎮 DANH MỤC: SHOP\n\n❝ Chọn danh mục bên dưới để xem sản phẩm và gói thời hạn: ❞'
     if edit: await message.edit_text(txt, reply_markup=InlineKeyboardMarkup(rows))
@@ -349,11 +369,11 @@ async def show_category(q, category_id, user_id):
         if is_sh:
             src_str = 'ShopHenry' if o.get('shophenry_product_id') else 'Chưa gán ID'
         else:
-            src_str = f"Kho: {stock_for_option(o['id'])}"
+            src_str = str(stock_for_option(o['id']))
             
         current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
-        btn_text = f"✨ {o['product_name']} ({o['duration_label']}) – {current_price:,}đ ({src_str})"
-        rows.append([InlineKeyboardButton(btn_text, callback_data=f"shop:option:{o['id']}")])
+        btn_text = f"{o['product_name']} - {o['duration_label']} — {current_price:,}đ [{src_str}]"
+        rows.append([quick_button(btn_text, callback_data=f"shop:option:{o['id']}")])
     rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
     
     txt = f"✨ {escape(cat['name'])}\n\n❝ Chọn gói sản phẩm bên dưới để xem chi tiết và mua: ❞"
@@ -368,12 +388,12 @@ async def show_quantity(q, option_id, context, user_id):
     current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
     context.user_data['selected_option']=option_id
     buttons=[
-        [InlineKeyboardButton('🗝 Mua 1 Key',callback_data=f'shop:qty:{option_id}:1'),
-         InlineKeyboardButton('🗝 Mua 2 Key',callback_data=f'shop:qty:{option_id}:2')],
-        [InlineKeyboardButton('🗝 Mua 3 Key',callback_data=f'shop:qty:{option_id}:3'),
-         InlineKeyboardButton('🗝 Mua 5 Key',callback_data=f'shop:qty:{option_id}:5')],
-        [InlineKeyboardButton('🗝 Mua 10 Key',callback_data=f'shop:qty:{option_id}:10')],
-        [InlineKeyboardButton('🔢 Mua số lượng khác',callback_data=f'shop:qty:{option_id}:other')],
+        [quick_button('Mua 1 Key',callback_data=f'shop:qty:{option_id}:1'),
+         quick_button('Mua 2 Key',callback_data=f'shop:qty:{option_id}:2')],
+        [quick_button('Mua 3 Key',callback_data=f'shop:qty:{option_id}:3'),
+         quick_button('Mua 5 Key',callback_data=f'shop:qty:{option_id}:5')],
+        [quick_button('Mua 10 Key',callback_data=f'shop:qty:{option_id}:10')],
+        [quick_button('Mua số lượng khác',callback_data=f'shop:qty:{option_id}:other')],
         [InlineKeyboardButton('📂 Quay Lại',callback_data=f"shop:cat:{o['category_id']}")]
     ]
     is_sh = is_aim_hack_product(o['product_name'])
@@ -400,7 +420,16 @@ async def show_confirm(q, option_id, qty, context, user_id):
     context.user_data.update(pending_purchase={'option_id':option_id,'quantity':qty,'total':total})
     payment_note = ('💳 Thanh toán: ShopHenry tự trừ số dư tài khoản nguồn. Bot không trừ số dư nội bộ.'
                     if is_shophenry else '💳 Thanh toán: Trừ số dư tài khoản trong bot.')
-    await q.edit_message_text(f"🧾 XÁC NHẬN MUA HÀNG\n\n📁 Danh mục: {escape(o['category_name'])}\n📦 Sản phẩm: {escape(o['product_name'])}\n⏳ Thời hạn: {escape(o['duration_label'])}\n🔢 Số lượng: {qty}\n💰 Giá bán: {total:,}đ\n{payment_note}\n\nBạn xác nhận mua chứ?",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('✅ XÁC NHẬN MUA',callback_data='shop:confirm')],[InlineKeyboardButton('❌ HỦY',callback_data='shop:cancel')]]),parse_mode='HTML')
+    await q.edit_message_text(
+        f"🧾 XÁC NHẬN MUA HÀNG\n\n📁 Danh mục: {escape(o['category_name'])}"
+        f"\n📦 Sản phẩm: {escape(o['product_name'])}\n⏳ Thời hạn: {escape(o['duration_label'])}"
+        f"\n🔢 Số lượng: {qty}\n💰 Giá bán: {total:,}đ\n{payment_note}\n\nBạn xác nhận mua chứ?",
+        reply_markup=InlineKeyboardMarkup([
+            [quick_button('XÁC NHẬN MUA', callback_data='shop:confirm')],
+            [quick_button('HỦY', style='danger', callback_data='shop:cancel')],
+        ]),
+        parse_mode='HTML',
+    )
 
 def shophenry_buy(product_id, quantity):
     if not SHOPHENRY_API_TOKEN:
@@ -590,7 +619,7 @@ async def do_purchase(q, update, context):
         f"HÃY THOÁT RA MENU CHÍNH ĐỂ LẤY CÁCH CÀI NHÉ!"
     )
     buy_again_kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton('🛒 Mua key tiếp', callback_data='shop:home')]
+        [quick_button('Mua key tiếp', callback_data='shop:home')]
     ])
     
     await q.edit_message_text(success_msg, parse_mode='HTML', reply_markup=buy_again_kb)
@@ -1367,7 +1396,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text(f'✅ Đã thêm {added}/{len(keys)} key thành công. Kho hiện có: {stock} key.', reply_markup=ADMIN_KB)
         if added:
             announcement = (f"🔥 CÓ HÀNG MỚI VỀ! 🔥\n━━━━━━━━━━━━━━━━━━\n📁 Danh mục: {info['category_name']}\n🎮 Sản phẩm: {info['product_name']}\n🔢 Số lượng: {added} sản phẩm đã được cập nhật!\n\n👉 Nhấn nút bên dưới để mở Mini App và mua ngay!")
-            shop_markup = InlineKeyboardMarkup([[InlineKeyboardButton('🚀 MỞ MINI APP', web_app=WebAppInfo(url=MINI_APP_URL))]]) if MINI_APP_URL.startswith('https://') else None
+            shop_markup = InlineKeyboardMarkup([[quick_button('MỞ MINI APP', web_app=WebAppInfo(url=MINI_APP_URL))]]) if MINI_APP_URL.startswith('https://') else None
             sent = await broadcast(context.bot, announcement, reply_markup=shop_markup)
             await msg.reply_text(f'📢 Đã thông báo tới {sent} người dùng.')
         return
@@ -1400,7 +1429,9 @@ async def broadcast_new_stock_http(text):
     if MINI_APP_URL.startswith('https://'):
         reply_markup = {
             'inline_keyboard': [[{
-                'text': '🚀 MỞ MINI APP',
+                'text': 'MỞ MINI APP',
+                'style': 'success',
+                'icon_custom_emoji_id': CUSTOM_BUTTON_EMOJI_ID,
                 'web_app': {'url': MINI_APP_URL},
             }]]
         }
