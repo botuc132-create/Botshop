@@ -84,7 +84,7 @@ ADMIN_KB = InlineKeyboardMarkup([
     [quick_button('Thông tin người dùng', callback_data='adm:usercheck')],
     [quick_button('Thêm sản phẩm', callback_data='adm:addproduct')],
     [quick_button('Thêm link cách cài', callback_data='adm:addguide')],
-    [quick_button('Gán ID ShopHenry (Aim Hack)', callback_data='adm:mapshop')],
+    [quick_button('Gán ID ShopHenry', callback_data='adm:mapshop')],
     [quick_button('Sửa giá / thời hạn', callback_data='adm:editproduct')],
     [quick_button('Sửa giá Sell', callback_data='adm:editsellprice')],
     [quick_button('Chi tiết sản phẩm', callback_data='adm:detailproduct')],
@@ -149,10 +149,6 @@ def clean_lines(raw):
         if v and v not in seen:
             out.append(v); seen.add(v)
     return out
-
-def is_aim_hack_product(product_name):
-    normalized = re.sub(r'[^a-z0-9]+', '', str(product_name or '').lower())
-    return 'aimhack' in normalized
 
 def init_db():
     global DB_POOL
@@ -365,11 +361,7 @@ async def show_category(q, category_id, user_id):
     if not cat: await q.edit_message_text('Danh mục không còn tồn tại.'); return
     rows = []
     for o in opts:
-        is_sh = is_aim_hack_product(o['product_name'])
-        if is_sh:
-            src_str = 'ShopHenry' if o.get('shophenry_product_id') else 'Chưa gán ID'
-        else:
-            src_str = str(stock_for_option(o['id']))
+        src_str = 'ShopHenry' if o.get('shophenry_product_id') else f"Kho: {stock_for_option(o['id'])}"
             
         current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
         btn_text = f"{o['product_name']} - {o['duration_label']} — {current_price:,}đ [{src_str}]"
@@ -396,11 +388,7 @@ async def show_quantity(q, option_id, context, user_id):
         [quick_button('Mua số lượng khác',callback_data=f'shop:qty:{option_id}:other')],
         [InlineKeyboardButton('📂 Quay Lại',callback_data=f"shop:cat:{o['category_id']}")]
     ]
-    is_sh = is_aim_hack_product(o['product_name'])
-    if is_sh:
-        src_text = 'ShopHenry' if o.get('shophenry_product_id') else 'Chưa gán ID'
-    else:
-        src_text = f"Kho: {stock_for_option(option_id)}"
+    src_text = 'ShopHenry' if o.get('shophenry_product_id') else f"Kho: {stock_for_option(option_id)}"
 
     await q.edit_message_text(
         f"🛒 {escape(o['product_name'])}\n⏳ {escape(o['duration_label'])}"
@@ -416,9 +404,9 @@ async def show_confirm(q, option_id, qty, context, user_id):
     is_seller = bool(u_row and u_row['is_seller'])
     current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
     total=current_price*qty
-    is_shophenry=is_aim_hack_product(o['product_name'])
+    is_shophenry=bool(o.get('shophenry_product_id'))
     context.user_data.update(pending_purchase={'option_id':option_id,'quantity':qty,'total':total})
-    payment_note = ('💳 Thanh toán: ShopHenry tự trừ số dư tài khoản nguồn. Bot không trừ số dư nội bộ.'
+    payment_note = ('💳 Thanh toán: Trừ số dư tài khoản trong bot; ShopHenry cấp key.'
                     if is_shophenry else '💳 Thanh toán: Trừ số dư tài khoản trong bot.')
     await q.edit_message_text(
         f"🧾 XÁC NHẬN MUA HÀNG\n\n📁 Danh mục: {escape(o['category_name'])}"
@@ -511,15 +499,16 @@ async def do_purchase(q, update, context):
         is_seller = bool(user['is_seller'])
         current_price = opt['sell_price'] if (is_seller and opt['sell_price'] > 0) else opt['price']
         total = current_price * qty
-        is_shophenry = is_aim_hack_product(opt['product_name'])
+        is_shophenry = bool(opt.get('shophenry_product_id'))
+
+        if user['balance'] < total:
+            con.rollback()
+            await q.edit_message_text(
+                f"❌ Số dư không đủ.\nCần: {total:,}đ\nHiện có: {user['balance']:,}đ"
+            )
+            return
 
         if is_shophenry:
-            if not opt.get('shophenry_product_id'):
-                con.rollback()
-                await q.edit_message_text(
-                    '⚠️ Sản phẩm Aim Hack chưa được gán product_id ShopHenry. Admin cần gán ID trước khi mua.'
-                )
-                return
             try:
                 key_text, supplier_order = await asyncio.to_thread(
                     shophenry_buy, opt['shophenry_product_id'], qty
@@ -532,16 +521,10 @@ async def do_purchase(q, update, context):
                 await q.edit_message_text(
                     '❌ ShopHenry không xác nhận được đơn.\n'
                     + str(api_error)[:700]
-                    + '\n\nBot không trừ số dư nội bộ. Nếu API đã tạo đơn, hãy gửi mã đơn cho admin kiểm tra và không bấm mua lại.'
+                    + '\n\nNếu API báo lỗi sau khi tạo đơn, đừng mua lại ngay; hãy gửi mã đơn cho admin kiểm tra.'
                 )
                 return
         else:
-            if user['balance'] < total:
-                con.rollback()
-                await q.edit_message_text(
-                    f"❌ Số dư không đủ.\nCần: {total:,}đ\nHiện có: {user['balance']:,}đ"
-                )
-                return
             keys = con.execute(
                 "SELECT id,key_value FROM product_keys WHERE option_id=? AND status='available' ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED",
                 (oid, qty)
@@ -553,8 +536,8 @@ async def do_purchase(q, update, context):
             key_text = '\n'.join(k['key_value'] for k in keys)
 
         stamp = now()
+        con.execute('UPDATE users SET balance=balance-? WHERE user_id=?', (total, uid))
         if not is_shophenry:
-            con.execute('UPDATE users SET balance=balance-? WHERE user_id=?', (total, uid))
             for k in keys:
                 con.execute(
                     "UPDATE product_keys SET status='sold',sold_to=?,sold_at=? WHERE id=?",
@@ -1269,7 +1252,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
         qty = int(text); context.user_data['pending_purchase'] = {'option_id': oid, 'quantity': qty, 'total': current_price * qty}
         p = context.user_data['pending_purchase']
-        payment_note = ('ShopHenry sẽ tự trừ số dư tài khoản nguồn; bot không trừ ví nội bộ.' if o.get('shophenry_product_id') else 'Bot sẽ kiểm tra kho và số dư trước khi trừ tiền.')
+        payment_note = ('Bot sẽ trừ số dư nội bộ; ShopHenry cấp key.' if o.get('shophenry_product_id') else 'Bot sẽ kiểm tra kho và số dư trước khi trừ tiền.')
         await msg.reply_text(f"🧾 XÁC NHẬN MUA HÀNG\n\n📁 Danh mục: {escape(o['category_name'])}\n📦 Sản phẩm: {escape(o['product_name'])}\n⏳ Thời hạn: {escape(o['duration_label'])}\n🔢 Số lượng: {p['quantity']}\n💰 Giá bán: {p['total']:,}đ\n\n{payment_note}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('✅ XÁC NHẬN MUA', callback_data='shop:confirm')], [InlineKeyboardButton('❌ HỦY', callback_data='shop:cancel')], [InlineKeyboardButton('↩️ Trở về', callback_data='menu:home')]])); return
     if flow == 'deposit_amount':
         if not text.isdigit() or not 1 <= int(text) <= 1_000_000_000:
@@ -1562,19 +1545,25 @@ async def api_purchase(request: Request):
         if not u or u['is_locked']: raise HTTPException(status_code=403,detail='Tài khoản không thể mua hàng.')
         if not opt: raise HTTPException(status_code=404,detail='Gói sản phẩm không tồn tại.')
         price=opt['sell_price'] if u['is_seller'] and opt['sell_price']>0 else opt['price']; total=int(price)*qty
-        external=is_aim_hack_product(opt['product_name'])
+        external=bool(opt.get('shophenry_product_id'))
+        if u['balance'] < total:
+            raise HTTPException(status_code=400,detail=f'Số dư không đủ. Cần {total:,}đ, hiện có {u["balance"]:,}đ.')
         if external:
-            if not opt['shophenry_product_id']: raise HTTPException(status_code=400,detail='Sản phẩm Aim Hack chưa được gán ID ShopHenry.')
-            con.rollback()
-            key_text,supplier_order=await asyncio.to_thread(shophenry_buy,opt['shophenry_product_id'],qty)
-            con.execute('BEGIN')
-            u=con.execute('SELECT balance,is_locked,is_seller FROM users WHERE user_id=? FOR UPDATE',(user['id'],)).fetchone()
+            try:
+                key_text,supplier_order=await asyncio.to_thread(shophenry_buy,opt['shophenry_product_id'],qty)
+            except Exception as api_error:
+                log.warning('Mini App ShopHenry purchase failed for user=%s product=%s: %s',
+                            user['id'], opt['shophenry_product_id'], api_error)
+                raise HTTPException(
+                    status_code=502,
+                    detail='ShopHenry chưa xác nhận được đơn. Nếu API có thể đã tạo đơn, hãy kiểm tra mã đơn với admin trước khi mua lại.'
+                )
         else:
-            if u['balance'] < total: raise HTTPException(status_code=400,detail=f'Số dư không đủ. Cần {total:,}đ, hiện có {u["balance"]:,}đ.')
             keys=con.execute("SELECT id,key_value FROM product_keys WHERE option_id=? AND status='available' ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED",(oid,qty)).fetchall()
             if len(keys)<qty: raise HTTPException(status_code=400,detail=f'Kho không đủ key. Hiện còn {len(keys)} key.')
             key_text='\n'.join(k['key_value'] for k in keys)
-            con.execute('UPDATE users SET balance=balance-? WHERE user_id=?',(total,user['id']))
+        con.execute('UPDATE users SET balance=balance-? WHERE user_id=?',(total,user['id']))
+        if not external:
             for k in keys: con.execute("UPDATE product_keys SET status='sold',sold_to=?,sold_at=? WHERE id=?",(user['id'],now(),k['id']))
         purchase_row=con.execute('''INSERT INTO purchases(user_id,category_name,product_name,duration_label,quantity,unit_price,total_price,keys_text,created_at,supplier_order_code)
             VALUES(?,?,?,?,?,?,?,?,?,?) RETURNING id''',(user['id'],opt['category_name'],opt['product_name'],opt['duration_label'],qty,price,total,key_text,now(),supplier_order or None)).fetchone()
