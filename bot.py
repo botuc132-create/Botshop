@@ -219,6 +219,7 @@ def init_db():
             amount BIGINT NOT NULL CHECK(amount > 0), balance_after BIGINT NOT NULL,
             note TEXT, created_at TEXT NOT NULL)""",
         r"""DO $$ DECLARE r RECORD; BEGIN
+            -- Cho phép admin tạo thời hạn tùy ý như 12 giờ hoặc 90 ngày.
             FOR r IN
                 SELECT conname FROM pg_constraint
                 WHERE conrelid = 'public.product_options'::regclass
@@ -227,10 +228,6 @@ def init_db():
             LOOP
                 EXECUTE format('ALTER TABLE public.product_options DROP CONSTRAINT %I', r.conname);
             END LOOP;
-            ALTER TABLE public.product_options
-                ADD CONSTRAINT product_options_duration_check
-                CHECK (duration IN ('1h','1d','7d','30d'));
-        EXCEPTION WHEN duplicate_object THEN NULL;
         END $$""",
         """INSERT INTO product_options(product_id,duration,duration_label,price,sell_price)
             SELECT p.id, d.duration, d.label, 0, 0
@@ -1029,8 +1026,39 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with db() as con:
             opts = con.execute('SELECT * FROM product_options WHERE product_id::text=?::text ORDER BY id', (pid,)).fetchall()
         rows = [[InlineKeyboardButton(f"{o['duration_label']} · Giá: {o['price']:,}đ | Sell: {o['sell_price']:,}đ", callback_data=f"adm:detailoption:{o['id']}")] for o in opts]
-        rows.append([InlineKeyboardButton('↩️ Quay lại', callback_data='adm:detailproduct')])
-        await q.edit_message_text('📋 CHI TIẾT SẢN PHẨM\nChọn gói muốn thay đổi giá:', reply_markup=InlineKeyboardMarkup(rows))
+        rows += [[InlineKeyboardButton('➕ Thêm thời hạn', callback_data=f'adm:addduration:{pid}')],
+                 [InlineKeyboardButton('🗑 Xóa thời hạn', callback_data=f'adm:delduration:{pid}')],
+                 [InlineKeyboardButton('↩️ Quay lại', callback_data='adm:detailproduct')]]
+        await q.edit_message_text('📋 CHI TIẾT SẢN PHẨM\nChọn gói để sửa giá hoặc quản lý thời hạn:', reply_markup=InlineKeyboardMarkup(rows))
+    elif data.startswith('adm:addduration:'):
+        pid = int(data.split(':')[2])
+        context.user_data.update(flow='add_product_duration', duration_product_id=pid)
+        if q.message:
+            await q.message.reply_text('Nhập thời hạn muốn thêm (ví dụ: 12 giờ, 2 ngày, 90 ngày):')
+    elif data.startswith('adm:delduration:'):
+        pid = int(data.split(':')[2])
+        with db() as con:
+            opts = con.execute('SELECT id,duration_label FROM product_options WHERE product_id=? ORDER BY id', (pid,)).fetchall()
+        rows = [[InlineKeyboardButton(f"{o['duration_label']}", callback_data=f"adm:deldurationconfirm:{o['id']}:{pid}")] for o in opts]
+        rows.append([InlineKeyboardButton('↩️ Quay lại', callback_data=f'adm:detailprod:{pid}')])
+        await q.edit_message_text('Chọn thời hạn muốn xóa:', reply_markup=InlineKeyboardMarkup(rows))
+    elif data.startswith('adm:deldurationconfirm:'):
+        parts = data.split(':'); oid, pid = int(parts[2]), int(parts[3])
+        with db() as con:
+            row = con.execute('SELECT duration_label FROM product_options WHERE id=? AND product_id=?', (oid,pid)).fetchone()
+        if not row:
+            await q.answer('Thời hạn không còn tồn tại.', show_alert=True); return
+        context.user_data['delete_duration_option_id'] = oid
+        await q.edit_message_text(f"Xác nhận xóa thời hạn {row['duration_label']}? Toàn bộ key gắn với gói này sẽ bị xóa khỏi kho; lịch sử đơn mua vẫn được giữ.", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton('⚠️ XÁC NHẬN XÓA', callback_data='adm:deldurationyes')],
+            [InlineKeyboardButton('Hủy', callback_data=f'adm:detailprod:{pid}')]]))
+    elif data == 'adm:deldurationyes':
+        oid = context.user_data.pop('delete_duration_option_id', None)
+        if not oid:
+            await q.answer('Không tìm thấy thời hạn cần xóa.', show_alert=True); return
+        with db() as con:
+            con.execute('DELETE FROM product_options WHERE id=?', (oid,))
+        await q.edit_message_text('✅ Đã xóa thời hạn và key gắn với gói đó. Lịch sử đơn mua vẫn được giữ.', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ Quay lại Admin', callback_data='adm:menu')]]))
     elif data.startswith('adm:detailoption:'):
         oid = int(data.split(':')[2])
         context.user_data.update(flow='edit_option_price', edit_option_id=oid)
@@ -1338,6 +1366,24 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             log.exception('Rename category failed'); await msg.reply_text('Tên đã tồn tại hoặc không thể cập nhật.'); return
         context.user_data.clear(); await msg.reply_text('✅ Đã đổi tên danh mục ngoài.', reply_markup=ADMIN_KB); return
+    if flow == 'add_product_duration' and is_admin(update):
+        label = text.strip()
+        pid = context.user_data.get('duration_product_id')
+        if not pid or not label or len(label) > 40 or not re.search(r'\d', label):
+            await msg.reply_text('Thời hạn không hợp lệ. Nhập lại, ví dụ: 12 giờ hoặc 2 ngày:'); return
+        try:
+            with db() as con:
+                exists = con.execute('SELECT 1 FROM product_options WHERE product_id=? AND LOWER(duration_label)=LOWER(?)', (pid,label)).fetchone()
+                if exists:
+                    await msg.reply_text('Sản phẩm đã có thời hạn này. Nhập thời hạn khác:'); return
+                code = f"custom_{int(time.time() * 1000)}"
+                con.execute('INSERT INTO product_options(product_id,duration,duration_label,price,sell_price) VALUES(?,?,?,0,0)', (pid,code,label))
+            context.user_data.clear()
+            await msg.reply_text(f'✅ Đã thêm thời hạn {label}. Thời hạn mới đã được đồng bộ lên Mini App với giá mặc định 0đ.', reply_markup=ADMIN_KB)
+        except Exception:
+            log.exception('Add custom product duration failed')
+            context.user_data.clear(); await msg.reply_text('❌ Không thể thêm thời hạn. Kiểm tra Logs.', reply_markup=ADMIN_KB)
+        return
     if flow == 'edit_option_price' and is_admin(update):
         if not text.isdigit() or int(text) < 0:
             await msg.reply_text('Giá phải là số nguyên không âm. Nhập lại giá thường VNĐ:'); return
@@ -1745,6 +1791,22 @@ async def api_admin_action(request: Request):
                 oid=int(data.get('option_id')); price=int(data.get('price'))
                 if price<0: raise HTTPException(status_code=400,detail='Giá không được âm.')
                 col='price' if action=='edit_price' else 'sell_price'; con.execute(f'UPDATE product_options SET {col}=? WHERE id=?',(price,oid)); return {'success':True,'message':'Đã cập nhật giá.'}
+            if action=='add_duration':
+                pid=int(data.get('product_id')); label=str(data.get('duration_label','')).strip()
+                if not label or len(label)>40 or not re.search(r'\d',label): raise HTTPException(status_code=400,detail='Thời hạn không hợp lệ. Ví dụ: 12 giờ hoặc 2 ngày.')
+                product=con.execute('SELECT id FROM products WHERE id=?',(pid,)).fetchone()
+                if not product: raise HTTPException(status_code=404,detail='Không tìm thấy sản phẩm.')
+                if con.execute('SELECT 1 FROM product_options WHERE product_id=? AND LOWER(duration_label)=LOWER(?)',(pid,label)).fetchone():
+                    raise HTTPException(status_code=409,detail='Sản phẩm đã có thời hạn này.')
+                code=f"custom_{int(time.time()*1000)}"
+                con.execute('INSERT INTO product_options(product_id,duration,duration_label,price,sell_price) VALUES(?,?,?,0,0)',(pid,code,label))
+                return {'success':True,'message':f'Đã thêm thời hạn {label}. Đã đồng bộ lên Mini App với giá mặc định 0đ.'}
+            if action=='delete_duration':
+                oid=int(data.get('option_id'))
+                row=con.execute('SELECT id,duration_label FROM product_options WHERE id=?',(oid,)).fetchone()
+                if not row: raise HTTPException(status_code=404,detail='Không tìm thấy thời hạn.')
+                con.execute('DELETE FROM product_options WHERE id=?',(oid,))
+                return {'success':True,'message':f"Đã xóa thời hạn {row['duration_label']} và key gắn với gói đó. Lịch sử đơn mua vẫn được giữ."}
             if action=='rename_category':
                 cid=int(data.get('category_id')); name=str(data.get('name','')).strip()
                 if not name: raise HTTPException(status_code=400,detail='Tên mới không được trống.')

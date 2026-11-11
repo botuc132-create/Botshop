@@ -375,6 +375,8 @@
                 <button class="admin-action-btn" onclick="adminAction('edit_price')">✏️ Sửa Giá Thường</button>
                 <button class="admin-action-btn" onclick="adminAction('edit_sell_price')">💰 Sửa Giá Sell</button>
                 <button class="admin-action-btn" onclick="adminAction('detail_product')">📋 Chi Tiết Sản Phẩm</button>
+                <button class="admin-action-btn" onclick="adminAction('add_duration')">➕ Thêm Thời Hạn</button>
+                <button class="admin-action-btn" onclick="adminAction('delete_duration')">🗑 Xóa Thời Hạn</button>
                 <button class="admin-action-btn" onclick="adminAction('rename_category')">📝 Đổi Tên Danh Mục</button>
                 <button class="admin-action-btn" onclick="adminAction('delete_category')">🗑 Xóa Danh Mục</button>
                 <button class="admin-action-btn" onclick="adminAction('delete_product')">🗑 Xóa Sản Phẩm</button>
@@ -893,6 +895,8 @@
                 else if(actionType==='map_shop') { tg.showAlert('Các gói hiện có:\n'+options); fields.option_id=Number(adminAsk('ID gói sản phẩm:')); fields.shophenry_product_id=adminAsk('ShopHenry product_id:'); if(!fields.option_id||!fields.shophenry_product_id)return; }
                 else if(actionType==='edit_price'||actionType==='edit_sell_price') { tg.showAlert('Các gói hiện có:\n'+options); fields.option_id=Number(adminAsk('ID gói cần sửa:')); fields.price=Number(adminAsk('Giá mới (VNĐ):')); if(!fields.option_id||!Number.isSafeInteger(fields.price)||fields.price<0)return; }
                 else if(actionType==='detail_product'||actionType==='stock') { tg.showAlert('Sản phẩm hiện có:\n'+products); const pid=Number(adminAsk('ID sản phẩm:')); if(!pid)return; const r=await adminApi('stock',{product_id:pid}); tg.showAlert((r.items||[]).map(x=>`${x.duration_label}: còn ${x.available}/${x.total} · Giá ${adminMoney(x.price)} · Sell ${adminMoney(x.sell_price)}`).join('\n')||'Không có gói sản phẩm.'); return; }
+                else if(actionType==='add_duration') { tg.showAlert('Sản phẩm hiện có:\n'+products); fields.product_id=Number(adminAsk('ID sản phẩm cần thêm thời hạn:')); fields.duration_label=adminAsk('Nhập thời hạn (ví dụ: 12 giờ, 2 ngày):'); if(!fields.product_id||!fields.duration_label)return; }
+                else if(actionType==='delete_duration') { tg.showAlert('Các gói thời hạn hiện có:\n'+options); fields.option_id=Number(adminAsk('ID gói thời hạn cần xóa:')); if(!fields.option_id)return; if(!confirm('Xóa thời hạn này? Toàn bộ key gắn với gói sẽ bị xóa khỏi kho; lịch sử đơn mua vẫn được giữ.'))return; }
                 else if(actionType==='rename_category') { tg.showAlert('Danh mục hiện có:\n'+cats); fields.category_id=Number(adminAsk('ID danh mục cần đổi tên:')); fields.name=adminAsk('Tên danh mục mới:'); if(!fields.category_id||!fields.name)return; }
                 else if(actionType==='delete_category'||actionType==='delete_product') { tg.showAlert(actionType==='delete_category'?'Danh mục:\n'+cats:'Sản phẩm:\n'+products); fields.id=Number(adminAsk('Nhập ID cần xóa:')); if(!fields.id)return; if(!confirm('Bạn chắc chắn muốn xóa? Thao tác này không thể hoàn tác.'))return; }
                 const r=await adminApi(actionType,fields); tg.showAlert(r.message || 'Đã thực hiện thành công.');
