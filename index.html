@@ -570,11 +570,39 @@
         let loadingInterval = setInterval(() => {
             if (currentProgress < 84) setLoadingProgress(currentProgress + 2, 'ĐANG TẢI DỮ LIỆU...');
         }, 130);
-        function finishInitialLoading() {
+        function waitForInitialImages(timeoutMs = 12000) {
+            const images = Array.from(document.images).filter(img => {
+                const src = (img.currentSrc || img.src || '').trim();
+                return src && !src.startsWith('about:') && img.getAttribute('src') !== '';
+            });
+            if (!images.length) return Promise.resolve();
+
+            const imagePromises = images.map(img => {
+                if (img.complete) {
+                    if (img.naturalWidth > 0 && typeof img.decode === 'function') {
+                        return img.decode().catch(() => undefined);
+                    }
+                    return Promise.resolve();
+                }
+                return new Promise(resolve => {
+                    const done = () => resolve();
+                    img.addEventListener('load', done, { once: true });
+                    img.addEventListener('error', done, { once: true });
+                });
+            });
+            return Promise.race([
+                Promise.all(imagePromises),
+                new Promise(resolve => setTimeout(resolve, timeoutMs))
+            ]);
+        }
+
+        async function finishInitialLoading() {
             if (initialLoadingFinished) return;
             initialLoadingFinished = true;
             clearInterval(loadingInterval);
-            const minimumVisibleMs = 500;
+            setLoadingProgress(88, 'ĐANG TẢI HÌNH ẢNH...');
+            await waitForInitialImages(12000);
+            const minimumVisibleMs = 900;
             const remaining = Math.max(0, minimumVisibleMs - (performance.now() - loadingStartedAt));
             setTimeout(() => {
                 setLoadingProgress(100, 'HOÀN THÀNH!');
@@ -1231,8 +1259,8 @@
             tg.showAlert(`Tính năng: ${actionName}`);
         }
 
-        refreshAccountData();
-        loadCatalog().finally(finishInitialLoading);
+        Promise.allSettled([refreshAccountData(), loadCatalog()])
+            .then(() => finishInitialLoading());
         if (balanceRefreshInterval) clearInterval(balanceRefreshInterval);
         balanceRefreshInterval = setInterval(refreshAccountData, 15000);
     </script>
