@@ -159,6 +159,30 @@
         .nav-item { background: none; border: none; display: flex; flex-direction: column; align-items: center; color: var(--text-sub); cursor: pointer; font-size: 10px; font-weight: 700; gap: 4px; width: 33.33%; }
         .nav-item.active { color: var(--accent-blue); }
         .nav-item svg { width: 22px; height: 22px; fill: currentColor; }
+    
+        /* Các tinh chỉnh giao diện theo yêu cầu */
+        :root { --bg-color:#091321; --card-bg:#101d30; --box-bg:#172840; --text-sub:#a9bad0; --border-color:#29415f; }
+        .balance-usdt { display:none !important; }
+        .icon-action-btn { display:none !important; }
+        .buy-now-btn { min-height:52px; padding:15px 12px; font-size:15px; }
+        .app-item, .select-category-box, .package-card { padding-top:16px; padding-bottom:16px; }
+        .app-logo { width:58px; height:58px; }
+        .progress-bar-container { height:4px; }
+        .kho-card { padding:12px 10px; }
+        .kho-item { padding:10px; margin-bottom:9px; border-radius:12px; }
+        .key-row { display:flex; flex-direction:column; align-items:stretch; gap:7px; padding:9px 0; }
+        .key-text { overflow-wrap:anywhere; font-weight:800; }
+        .copy-btn { width:100%; min-height:34px; }
+        .section-header,.banner-text h2,.user-info h3,.history-header,.deposit-title,.admin-title { font-weight:900 !important; }
+        .user-info h3,.banner-text h2,.section-header { font-size:15px; }
+        .purchase-success-overlay { position:fixed; inset:0; z-index:10001; display:none; align-items:center; justify-content:center; padding:18px; background:rgba(0,0,0,.82); }
+        .purchase-success-overlay.open { display:flex; }
+        .purchase-success-card { width:100%; max-width:440px; max-height:85vh; overflow:auto; box-sizing:border-box; padding:20px 16px; border-radius:18px; border:1px solid #315777; background:#102239; color:#fff; }
+        .purchase-success-card h3 { text-align:center; font-size:18px; font-weight:900; margin:0 0 16px; }
+        .purchase-success-card .success-key { white-space:pre-wrap; overflow-wrap:anywhere; padding:12px; border-radius:10px; background:#071525; border:1px solid #29415f; font-weight:800; user-select:text; -webkit-user-select:text; margin:8px 0 12px; }
+        .purchase-success-card button { width:100%; min-height:42px; margin-top:8px; border:1px solid #2e83b8; border-radius:10px; background:#17669a; color:white; font-weight:900; font-size:14px; }
+        .purchase-success-card button.secondary { background:#172d46; border-color:#38516b; }
+
     </style>
 </head>
 <body>
@@ -481,7 +505,7 @@
                         value.textContent = key;
                         const date = document.createElement('div');
                         date.className = 'key-date';
-                        date.textContent = 'Ngày mua: ' + (p.created_at || '');
+                        date.textContent = 'Ngày mua: ' + (p.created_at ? new Date(p.created_at).toLocaleString('vi-VN', {timeZone:'Asia/Ho_Chi_Minh'}) : '');
                         info.append(value, date);
                         const copy = document.createElement('button');
                         copy.className = 'copy-btn';
@@ -1041,6 +1065,38 @@
             tg.showAlert('Mã voucher không hợp lệ hoặc đã hết hạn.');
         }
 
+
+        let latestPurchaseKey = '';
+        let latestPurchaseGuide = '';
+        function openPurchaseGuide() {
+            if (latestPurchaseGuide) window.open(latestPurchaseGuide, '_blank');
+        }
+        async function copyPurchaseKey() {
+            if (!latestPurchaseKey) return;
+            try { await navigator.clipboard.writeText(latestPurchaseKey); tg.showAlert('Đã sao chép key!'); }
+            catch (_) { const area=document.createElement('textarea'); area.value=latestPurchaseKey; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); tg.showAlert('Đã sao chép key!'); }
+        }
+        function closePurchaseSuccess() {
+            document.getElementById('purchase-success-overlay').classList.remove('open');
+        }
+        function showPurchaseSuccess(result) {
+            latestPurchaseKey = String(result.keys_text || '');
+            latestPurchaseGuide = String(result.guide_url || '');
+            const info = document.getElementById('purchase-success-info');
+            info.innerHTML = '';
+            [
+              ['🎮 Game: ', result.category_name || ''],
+              ['📦 Sản phẩm: ', `${result.product_name || ''} - ${result.duration_label || ''}`],
+              ['🔢 Số lượng: ', result.quantity || currentQty],
+              ['💰 Tổng tiền: ', Number(result.total || 0).toLocaleString('vi-VN') + 'đ']
+            ].forEach(([label,value]) => {
+              const row=document.createElement('p'); row.style.cssText='margin:7px 0;font-weight:800'; row.textContent=label+value; info.appendChild(row);
+            });
+            document.getElementById('purchase-success-key').textContent = latestPurchaseKey || 'Key chưa được trả về.';
+            document.getElementById('purchase-guide-button').style.display = latestPurchaseGuide ? 'block' : 'none';
+            document.getElementById('purchase-success-overlay').classList.add('open');
+        }
+
         async function executeBuy() {
             if (!selectedOptionId) {
                 tg.showAlert('Vui lòng chọn gói sản phẩm từ danh mục.');
@@ -1057,11 +1113,7 @@
                         method: 'POST',
                         body: JSON.stringify({option_id: selectedOptionId, quantity: currentQty})
                     });
-                    tg.showPopup({
-                        title: 'Mua hàng thành công',
-                        message: `Đơn #${result.purchase_id} · ${Number(result.total).toLocaleString('vi-VN')}đ\\nMua thành công! Hãy quay lại bot Telegram để nhận key.`,
-                        buttons: [{type: 'ok'}]
-                    });
+                    showPurchaseSuccess(result);
                     void refreshAccountData();
                     void loadCatalog({force:true});
                     document.getElementById('checkout-box').style.display = 'none';
@@ -1184,5 +1236,18 @@
         if (balanceRefreshInterval) clearInterval(balanceRefreshInterval);
         balanceRefreshInterval = setInterval(refreshAccountData, 15000);
     </script>
+
+    <div id="purchase-success-overlay" class="purchase-success-overlay" onclick="if(event.target===this) closePurchaseSuccess()">
+      <div class="purchase-success-card">
+        <h3>🎉 MUA HÀNG THÀNH CÔNG! 🎉</h3>
+        <div id="purchase-success-info"></div>
+        <b>🔑 KEY CỦA BẠN:</b>
+        <div id="purchase-success-key" class="success-key"></div>
+        <button onclick="copyPurchaseKey()">📋 SAO CHÉP KEY</button>
+        <button id="purchase-guide-button" class="secondary" style="display:none" onclick="openPurchaseGuide()">📖 CÁCH CÀI</button>
+        <button class="secondary" onclick="closePurchaseSuccess()">ĐÓNG</button>
+      </div>
+    </div>
+
 </body>
 </html>

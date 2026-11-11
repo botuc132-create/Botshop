@@ -139,7 +139,7 @@ def db():
         raise RuntimeError('Thiếu DATABASE_URL trong .env')
     return Database()
 
-def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
+def now(): return datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).isoformat(timespec='seconds')
 def now_vn(): return datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).strftime('%d/%m/%Y %H:%M:%S')
 def make_qr_url(amount, memo):
     params = {
@@ -602,16 +602,21 @@ async def do_purchase(q, update, context):
     finally:
         con.close()
 
+    with db() as guide_con:
+        guide_cat = guide_con.execute('SELECT guide_url FROM categories WHERE id=?', (opt['category_id'],)).fetchone()
+    guide_url = guide_cat['guide_url'] if guide_cat else None
     success_msg = (
-        f"🥳 MUA KEY {opt['product_name'].upper()} {opt['duration_label'].upper()} THÀNH CÔNG\n\n"
-        f"Key :\n<pre>{escape(key_text)}</pre>\n\n"
-        f"HÃY THOÁT RA MENU CHÍNH ĐỂ LẤY CÁCH CÀI NHÉ!"
+        "🎉 <b>MUA HÀNG THÀNH CÔNG!</b> 🎉\\n\\n"
+        f"🎮 Game: <b>{escape(opt['category_name'])}</b>\\n"
+        f"📦 Sản phẩm: <b>{escape(opt['product_name'])} - {escape(opt['duration_label'])}</b>\\n"
+        f"🔢 Số lượng: <b>{qty}</b>\\n"
+        f"💰 Tổng tiền: <b>{total:,}đ</b>\\n\\n"
+        f"🔑 <b>KEY CỦA BẠN:</b>\\n<pre>{escape(key_text)}</pre>"
     )
-    buy_again_kb = InlineKeyboardMarkup([
-        [quick_button('Mua key tiếp', callback_data='shop:home')]
-    ])
-    
-    await q.edit_message_text(success_msg, parse_mode='HTML', reply_markup=buy_again_kb)
+    buttons = [[quick_button('🛍 Mua key tiếp', callback_data='shop:home')]]
+    if guide_url:
+        buttons.append([InlineKeyboardButton('📖 Cách cài', url=guide_url)])
+    await q.edit_message_text(success_msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(buttons))
 
 async def user_history(q, uid):
     with db() as con: rows = con.execute('SELECT * FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 20', (uid,)).fetchall()
@@ -619,8 +624,14 @@ async def user_history(q, uid):
         await q.edit_message_text('📜 Bạn chưa có lịch sử mua hàng.', reply_markup=inline_back('menu:home'))
         return
     out = ['📜 LỊCH SỬ MUA HÀNG']
-    for r in rows: out.append(f"\n🧾 Đơn #{r['id']} · {r['created_at']}\n{r['product_name']} · {r['duration_label']}\nSố lượng: {r['quantity']} · {r['total_price']:,}đ")
-    await q.edit_message_text('\n'.join(out), reply_markup=inline_back('menu:home'))
+    for r in rows:
+        out.append(
+            f"\\n🧾 <b>Đơn #{r['id']}</b> · {escape(str(r['created_at']))}\\n"
+            f"📦 {escape(r['product_name'])} · {escape(r['duration_label'])}\\n"
+            f"🔢 Số lượng: {r['quantity']} · 💰 {r['total_price']:,}đ\\n"
+            f"🔑 KEY:\\n<pre>{escape(r['keys_text'] or 'Không có key')}</pre>"
+        )
+    await q.edit_message_text('\\n'.join(out), parse_mode='HTML', reply_markup=inline_back('menu:home'))
 
 async def broadcast(bot, text, photo=None, status_message=None, reply_markup=None):
     with db() as con: 
@@ -865,7 +876,14 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['flow'] = 'deposit_amount'
         await q.edit_message_text('💳 NẠP TIỀN\n\nNhập số tiền muốn nạp (VNĐ):', reply_markup=inline_back('menu:home'))
     elif data == 'menu:support':
-        await q.edit_message_text('🆘 HỖ TRỢ\nVui lòng liên hệ quản trị viên.', reply_markup=inline_back('menu:home'))
+        await q.edit_message_text(
+            '🆘 <b>HỖ TRỢ</b>\nNếu cần hỗ trợ, hãy nhấn nút bên dưới để liên hệ.',
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('💬 Liên Hệ', url='https://t.me/huybuwin')],
+                [InlineKeyboardButton('↩️ Quay lại', callback_data='menu:home')]
+            ])
+        )
     elif data == 'shop:home': await show_shop(q.message, edit=True)
     elif data.startswith('shop:cat:'): await show_category(q, int(data.split(':')[2]), user.id)
     elif data.startswith('shop:option:'): await show_quantity(q, int(data.split(':')[2]), context, user.id)
@@ -1251,7 +1269,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not text.isdigit() or not 1 <= int(text) <= 1000: await msg.reply_text('Nhập số nguyên từ 1 đến 1.000.'); return
         oid = context.user_data.get('selected_option'); context.user_data['flow'] = None
         with db() as con:
-            o = con.execute('SELECT po.*,p.name AS product_name,c.name AS category_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=?', (oid,)).fetchone()
+            o = con.execute('SELECT po.*,p.name AS product_name,p.category_id,c.name AS category_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=?', (oid,)).fetchone()
             u_row = con.execute('SELECT is_seller FROM users WHERE user_id=?',(user.id,)).fetchone()
         if not o: await msg.reply_text('Gói sản phẩm không còn tồn tại.', reply_markup=USER_KB); return
         is_seller = bool(u_row and u_row['is_seller'])
@@ -1546,7 +1564,7 @@ async def api_purchase(request: Request):
     try:
         con.execute('BEGIN')
         u=con.execute('SELECT balance,is_locked,is_seller FROM users WHERE user_id=? FOR UPDATE',(user['id'],)).fetchone()
-        opt=con.execute('''SELECT po.*,p.name AS product_name,c.name AS category_name FROM product_options po
+        opt=con.execute('''SELECT po.*,p.name AS product_name,p.category_id,c.name AS category_name FROM product_options po
             JOIN products p ON p.id=po.product_id JOIN categories c ON c.id=p.category_id WHERE po.id=?''',(oid,)).fetchone()
         if not u or u['is_locked']: raise HTTPException(status_code=403,detail='Tài khoản không thể mua hàng.')
         if not opt: raise HTTPException(status_code=404,detail='Gói sản phẩm không tồn tại.')
@@ -1580,10 +1598,21 @@ async def api_purchase(request: Request):
     except Exception as e:
         con.rollback(); log.exception('Mini App purchase failed'); raise HTTPException(status_code=500,detail=str(e)[:500])
     finally: con.close()
+    guide_url = None
     try:
-        await asyncio.to_thread(_telegram_http,'sendMessage',{'chat_id':user['id'],'text':'🔑 KEY CỦA BẠN:\n'+key_text})
+        with db() as guide_con:
+            guide_row = guide_con.execute('SELECT guide_url FROM categories WHERE id=?', (opt['category_id'],)).fetchone()
+            guide_url = guide_row['guide_url'] if guide_row else None
+        telegram_text = (
+            "🎉 MUA HÀNG THÀNH CÔNG! 🎉\n\n"
+            f"🎮 Game: {opt['category_name']}\n📦 Sản phẩm: {opt['product_name']} - {opt['duration_label']}\n"
+            f"🔢 Số lượng: {qty}\n💰 Tổng tiền: {total:,}đ\n\n🔑 KEY CỦA BẠN:\n<pre>{escape(key_text)}</pre>"
+        )
+        _telegram_http('sendMessage', {'chat_id':user['id'],'text':telegram_text,'parse_mode':'HTML'})
     except Exception: log.exception('Could not send purchased keys to Telegram user %s',user['id'])
-    return {'success':True,'purchase_id':purchase_id,'total':total,'total_price':total,'keys_text':key_text,'message':'Mua hàng thành công. Key đã được gửi vào chat bot.'}
+    return {'success':True,'purchase_id':purchase_id,'total':total,'total_price':total,'keys_text':key_text,
+            'category_name':opt['category_name'],'product_name':opt['product_name'],'duration_label':opt['duration_label'],
+            'quantity':qty,'guide_url':guide_url,'message':'Mua hàng thành công.'}
 
 
 @web_app.post('/api/deposits')
