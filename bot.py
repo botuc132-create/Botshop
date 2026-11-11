@@ -606,12 +606,12 @@ async def do_purchase(q, update, context):
         guide_cat = guide_con.execute('SELECT guide_url FROM categories WHERE id=?', (opt['category_id'],)).fetchone()
     guide_url = guide_cat['guide_url'] if guide_cat else None
     success_msg = (
-        "🎉 <b>MUA HÀNG THÀNH CÔNG!</b> 🎉\\n\\n"
-        f"🎮 Game: <b>{escape(opt['category_name'])}</b>\\n"
-        f"📦 Sản phẩm: <b>{escape(opt['product_name'])} - {escape(opt['duration_label'])}</b>\\n"
-        f"🔢 Số lượng: <b>{qty}</b>\\n"
-        f"💰 Tổng tiền: <b>{total:,}đ</b>\\n\\n"
-        f"🔑 <b>KEY CỦA BẠN:</b>\\n<pre>{escape(key_text)}</pre>"
+        "🎉 <b>MUA HÀNG THÀNH CÔNG!</b> 🎉\n\n"
+        f"🎮 Game: <b>{escape(opt['category_name'])}</b>\n"
+        f"📦 Sản phẩm: <b>{escape(opt['product_name'])} - {escape(opt['duration_label'])}</b>\n"
+        f"🔢 Số lượng: <b>{qty}</b>\n"
+        f"💰 Tổng tiền: <b>{total:,}đ</b>\n\n"
+        f"🔑 <b>KEY CỦA BẠN:</b>\n<code>{escape(key_text)}</code>"
     )
     buttons = [[quick_button('🛍 Mua key tiếp', callback_data='shop:home')]]
     if guide_url:
