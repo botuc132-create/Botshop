@@ -72,10 +72,6 @@ USER_KB = (
         [[KeyboardButton(
             'Mua Key',
             web_app=WebAppInfo(url=MINI_APP_URL),
-            api_kwargs={
-                'style': 'success',
-                'icon_custom_emoji_id': CUSTOM_BUTTON_EMOJI_ID,
-            },
         )]],
         resize_keyboard=True, is_persistent=True
     )
@@ -327,8 +323,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await message.reply_text('🛠 Bot đang bảo trì. Vui lòng quay lại sau.', reply_markup=USER_KB)
             return
         balance = row['balance'] if row else 0
-        await message.reply_text('✅ Đã gỡ nút Trở về cũ khỏi bàn phím.', reply_markup=ReplyKeyboardRemove())
         await message.reply_text(user_menu_text(user, balance).replace(f'🆔 ID: {user.id}', f'🆔 ID: <code>{user.id}</code>'), reply_markup=main_menu_markup(), parse_mode='HTML')
+        if MINI_APP_URL.startswith('https://'):
+            await message.reply_text(
+                '👇 Nhấn nút “Mua Key” bên dưới để mở Mini App.',
+                reply_markup=USER_KB
+            )
     except Exception:
         log.exception('Failed to handle /start')
         await message.reply_text('⚠️ Lỗi cơ sở dữ liệu khi khởi động.')
@@ -1396,7 +1396,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text(f'✅ Đã thêm {added}/{len(keys)} key thành công. Kho hiện có: {stock} key.', reply_markup=ADMIN_KB)
         if added:
             announcement = (f"🔥 CÓ HÀNG MỚI VỀ! 🔥\n━━━━━━━━━━━━━━━━━━\n📁 Danh mục: {info['category_name']}\n🎮 Sản phẩm: {info['product_name']}\n🔢 Số lượng: {added} sản phẩm đã được cập nhật!\n\n👉 Nhấn nút bên dưới để mở Mini App và mua ngay!")
-            shop_markup = InlineKeyboardMarkup([[quick_button('MỞ MINI APP', web_app=WebAppInfo(url=MINI_APP_URL))]]) if MINI_APP_URL.startswith('https://') else None
+            shop_markup = InlineKeyboardMarkup([[InlineKeyboardButton('🚀 MỞ MINI APP', web_app=WebAppInfo(url=MINI_APP_URL))]]) if MINI_APP_URL.startswith('https://') else None
             sent = await broadcast(context.bot, announcement, reply_markup=shop_markup)
             await msg.reply_text(f'📢 Đã thông báo tới {sent} người dùng.')
         return
@@ -1429,9 +1429,7 @@ async def broadcast_new_stock_http(text):
     if MINI_APP_URL.startswith('https://'):
         reply_markup = {
             'inline_keyboard': [[{
-                'text': 'MỞ MINI APP',
-                'style': 'success',
-                'icon_custom_emoji_id': CUSTOM_BUTTON_EMOJI_ID,
+                'text': '🚀 MỞ MINI APP',
                 'web_app': {'url': MINI_APP_URL},
             }]]
         }
@@ -1506,7 +1504,7 @@ async def health():
 
 
 @web_app.get('/api/me')
-async def api_me(request: Request):
+def api_me(request: Request):
     user = _mini_user(request)
     with db() as con:
         u = con.execute('SELECT balance,is_locked,is_seller FROM users WHERE user_id=?', (user['id'],)).fetchone()
@@ -1523,7 +1521,7 @@ async def api_me(request: Request):
 
 
 @web_app.get('/api/catalog')
-async def api_catalog(request: Request):
+def api_catalog(request: Request):
     user = _mini_user(request)
     with db() as con:
         cats = con.execute('SELECT id,name,guide_url,icon FROM categories ORDER BY id').fetchall()

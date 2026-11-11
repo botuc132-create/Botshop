@@ -30,20 +30,21 @@
 
         #loading-screen {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background-color: var(--bg-color);
+            background: radial-gradient(ellipse at center, #071719 0%, #050a14 62%);
             display: flex; flex-direction: column; justify-content: center; align-items: center;
             z-index: 9999; transition: opacity 0.3s ease;
         }
         .loading-spinner {
-            width: 60px; height: 60px; border: 3px solid rgba(0,162,255,0.1);
-            border-top: 3px solid var(--accent-blue); border-radius: 50%;
-            animation: spin 1s linear infinite; margin-bottom: 20px;
+            width: 60px; height: 60px; border: 2px solid rgba(0,229,168,0.1);
+            border-top-color: #00e5a8; border-right-color: rgba(0,229,168,0.45);
+            border-radius: 50%; box-shadow: 0 0 18px rgba(0,229,168,0.18);
+            animation: spin 0.9s linear infinite; margin-bottom: 20px;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .loading-title { font-size: 18px; font-weight: 800; color: #fff; letter-spacing: 2px; margin: 0; }
         .loading-subtitle { font-size: 11px; color: var(--text-sub); margin: 6px 0 25px 0; letter-spacing: 1px; }
         .progress-bar-container { width: 240px; background-color: var(--box-bg); border-radius: 10px; height: 6px; overflow: hidden; border: 1px solid var(--border-color); margin-bottom: 12px; }
-        .progress-bar-fill { width: 0%; height: 100%; background-color: var(--accent-blue); transition: width 0.1s linear; }
+        .progress-bar-fill { width: 0%; height: 100%; background: linear-gradient(90deg, #00b987, #00e5a8); box-shadow: 0 0 10px rgba(0,229,168,0.55); transition: width 0.18s ease; }
         .progress-info-row { width: 240px; display: flex; justify-content: space-between; font-size: 11px; color: var(--text-sub); font-weight: 700; }
 
         .tab-content { display: none; }
@@ -61,9 +62,12 @@
 
         .role-badge { display: none; font-size: 8px; font-weight: 800; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; }
         .role-badge.reseller { display: inline-block; background-color: #0b1d30; color: var(--accent-blue); border: 1px solid #14365c; }
-        .role-badge.admin { display: inline-block; background-color: #2c0b0b; color: var(--admin-red); border: 1px solid #461313; }\n        .role-badge.customer { display:inline-block; background:#0b1d30; color:var(--accent-blue); border:1px solid #14365c; }
+        .role-badge.admin { display: inline-block; background-color: #2c0b0b; color: var(--admin-red); border: 1px solid #461313; }
+        .role-badge.customer { display:inline-block; background:#0b1d30; color:var(--accent-blue); border:1px solid #14365c; }
 
-        .banner-card { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 16px; padding: 14px 16px; display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+        .banner-card { background: linear-gradient(120deg, #071c20 0%, var(--card-bg) 72%); border: 1px solid #173a3c; border-radius: 16px; padding: 14px 16px; display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+        .banner-icon { width: 58px; height: 58px; flex: 0 0 58px; display: grid; place-items: center; border-radius: 16px; background: linear-gradient(145deg, #082b43, #0b1e32); border: 1px solid #16496c; box-shadow: inset 0 0 18px rgba(0,162,255,0.09), 0 0 18px rgba(0,162,255,0.08); }
+        .banner-icon svg { width: 32px; height: 32px; fill: #00a2ff; filter: drop-shadow(0 0 7px rgba(0,162,255,0.55)); }
         .banner-text h2 { margin: 0; font-size: 16px; font-weight: 700; color: var(--text-main); }
         .banner-text p { margin: 2px 0 0 0; font-size: 11px; color: var(--text-sub); }
         .main-container { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 20px; padding: 16px 12px; }
@@ -139,7 +143,10 @@
         .ref-btn { width: 100%; background-color: #0d325c; color: var(--accent-blue); border: 1px solid #16467d; padding: 11px; border-radius: 12px; font-size: 12px; font-weight: 700; cursor: pointer; margin-bottom: 10px; }
         .ref-commission { display: flex; justify-content: space-between; align-items: center; background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 12px; padding: 12px; font-size: 12px; font-weight: 700; }
         .ref-commission span:last-child { color: var(--accent-yellow); }
-        .key-row { background-color: #060f1c; border: 1px solid #142a4a; border-radius: 10px; padding: 8px 10px; display: flex; flex-direction:column; align-items:stretch; gap:8px; margin-top: 6px; min-width:0; max-width:100%; box-sizing:border-box; }\n        .key-row > div {min-width:0; width:100%; overflow-wrap:anywhere; word-break:break-word;}\n        .key-text {overflow-wrap:anywhere; word-break:break-all;}\n        .key-row .copy-btn {align-self:flex-end;}
+        .key-row { background-color: #060f1c; border: 1px solid #142a4a; border-radius: 10px; padding: 8px 10px; display: flex; flex-direction:column; align-items:stretch; gap:8px; margin-top: 6px; min-width:0; max-width:100%; box-sizing:border-box; }
+        .key-row > div {min-width:0; width:100%; overflow-wrap:anywhere; word-break:break-word;}
+        .key-text {overflow-wrap:anywhere; word-break:break-all;}
+        .key-row .copy-btn {align-self:flex-end;}
         .key-text { font-family: monospace; font-size: 11px; color: var(--accent-blue); }
         .key-date { font-size: 9px; color: var(--text-sub); margin-top: 2px; }
         .copy-btn { background: #14335c; border: none; color: var(--text-main); border-radius: 6px; padding: 6px 8px; cursor: pointer; }
@@ -189,6 +196,11 @@
 
     <div id="tab-buy" class="tab-content active">
         <div class="banner-card">
+            <div class="banner-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                    <path d="M7.5 3a5.5 5.5 0 1 0 5.32 7h2.18v2h2v2h2v2h3v-5.17l-5.18-5.18A5.5 5.5 0 0 0 7.5 3Zm0 3a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z"/>
+                </svg>
+            </div>
             <div class="banner-text">
                 <h2>Mua Key</h2>
                 <p>Hệ thống tự động cấp Key</p>
@@ -504,6 +516,11 @@
 
         let ffAppIconUrl = '';
         let categoriesData = [];
+        const CATALOG_CACHE_TTL_MS = 20 * 1000;
+        const CATALOG_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+        const catalogCacheKey = `jinny-miniapp-catalog:${tg.initDataUnsafe?.user?.id || 'guest'}`;
+        let catalogFetchedAt = 0;
+        let catalogRequestPromise = null;
         let selectedCategory = null;
         let selectedOptionId = null;
 
@@ -517,26 +534,33 @@
         let adminSelectedCatForAddKey = '';
         let countdownInterval = null;
 
-        let currentProgress = 0;
-        let loadingInterval = setInterval(function() {
-            currentProgress += Math.floor(Math.random() * 8) + 3;
-            if (currentProgress >= 100) {
-                currentProgress = 100;
-                clearInterval(loadingInterval);
-                document.getElementById('progress-status-text').innerText = "HOÀN THÀNH!";
-                document.getElementById('progress-percent').innerText = "100%";
-                document.getElementById('progress-fill').style.width = "100%";
-                
-                setTimeout(function() {
-                    let loadingScreen = document.getElementById('loading-screen');
-                    loadingScreen.style.opacity = '0';
-                    setTimeout(() => loadingScreen.style.display = 'none', 300);
-                }, 250);
-            } else {
-                document.getElementById('progress-fill').style.width = currentProgress + '%';
-                document.getElementById('progress-percent').innerText = currentProgress + '%';
-            }
-        }, 40);
+        const loadingStartedAt = performance.now();
+        let currentProgress = 12;
+        let initialLoadingFinished = false;
+        function setLoadingProgress(value, status) {
+            currentProgress = Math.max(currentProgress, Math.min(100, value));
+            document.getElementById('progress-fill').style.width = currentProgress + '%';
+            document.getElementById('progress-percent').innerText = Math.round(currentProgress) + '%';
+            if (status) document.getElementById('progress-status-text').innerText = status;
+        }
+        let loadingInterval = setInterval(() => {
+            if (currentProgress < 84) setLoadingProgress(currentProgress + 2, 'ĐANG TẢI DỮ LIỆU...');
+        }, 130);
+        function finishInitialLoading() {
+            if (initialLoadingFinished) return;
+            initialLoadingFinished = true;
+            clearInterval(loadingInterval);
+            const minimumVisibleMs = 500;
+            const remaining = Math.max(0, minimumVisibleMs - (performance.now() - loadingStartedAt));
+            setTimeout(() => {
+                setLoadingProgress(100, 'HOÀN THÀNH!');
+                setTimeout(() => {
+                    const screen = document.getElementById('loading-screen');
+                    screen.style.opacity = '0';
+                    setTimeout(() => { screen.style.display = 'none'; }, 300);
+                }, 120);
+            }, remaining);
+        }
 
         let user = tg.initDataUnsafe?.user;
         if (user) {
@@ -593,16 +617,67 @@
             else openCategoryModal('buy');
         }
 
-        async function loadCatalog() {
+        function saveCatalogCache() {
             try {
-                const data = await apiRequest('/api/catalog');
-                categoriesData = data.categories || [];
-                document.getElementById('category-count').textContent = categoriesData.length + ' mục';
-                renderCategoriesList();
+                localStorage.setItem(catalogCacheKey, JSON.stringify({
+                    savedAt: catalogFetchedAt || Date.now(),
+                    categories: categoriesData
+                }));
             } catch (e) {
-                console.warn('Không tải được danh mục:', e);
-                document.getElementById('packages-list').innerHTML = '<p class="deposit-desc">Không tải được cửa hàng. Hãy mở Mini App từ bot và kiểm tra cấu hình database.</p>';
+                console.warn('Không thể lưu cache danh mục:', e);
             }
+        }
+
+        function applyCatalogData(data, fetchedAt = Date.now()) {
+            categoriesData = Array.isArray(data?.categories) ? data.categories : [];
+            catalogFetchedAt = fetchedAt;
+            document.getElementById('category-count').textContent = categoriesData.length + ' mục';
+            renderCategoriesList();
+        }
+
+        function invalidateCatalogCache() {
+            catalogFetchedAt = 0;
+            try { localStorage.removeItem(catalogCacheKey); } catch (_) {}
+        }
+
+        function refreshCatalog() {
+            if (catalogRequestPromise) return catalogRequestPromise;
+            catalogRequestPromise = apiRequest('/api/catalog')
+                .then(data => {
+                    applyCatalogData(data);
+                    saveCatalogCache();
+                    return categoriesData;
+                })
+                .catch(e => {
+                    console.warn('Không tải được danh mục:', e);
+                    if (!categoriesData.length) {
+                        document.getElementById('packages-list').innerHTML = '<p class="deposit-desc">Không tải được cửa hàng. Hãy mở Mini App từ bot và kiểm tra cấu hình database.</p>';
+                    }
+                    return categoriesData;
+                })
+                .finally(() => { catalogRequestPromise = null; });
+            return catalogRequestPromise;
+        }
+
+        async function loadCatalog(options = {}) {
+            const forceRefresh = Boolean(options.force);
+            if (!categoriesData.length) {
+                try {
+                    const cached = JSON.parse(localStorage.getItem(catalogCacheKey) || 'null');
+                    const age = Date.now() - Number(cached?.savedAt || 0);
+                    if (Array.isArray(cached?.categories) && age >= 0 && age <= CATALOG_CACHE_MAX_AGE_MS) {
+                        applyCatalogData({categories: cached.categories}, Number(cached.savedAt));
+                    }
+                } catch (_) {}
+            }
+
+            if (!forceRefresh && categoriesData.length && Date.now() - catalogFetchedAt < CATALOG_CACHE_TTL_MS) {
+                return categoriesData;
+            }
+            const hadCachedData = categoriesData.length > 0;
+            const refreshPromise = refreshCatalog();
+            if (hadCachedData && !forceRefresh) return categoriesData;
+            return await refreshPromise;
         }
 
         function renderCategoriesList() {
@@ -769,7 +844,8 @@
                 else if(actionType==='rename_category') { tg.showAlert('Danh mục hiện có:\n'+cats); fields.category_id=Number(adminAsk('ID danh mục cần đổi tên:')); fields.name=adminAsk('Tên danh mục mới:'); if(!fields.category_id||!fields.name)return; }
                 else if(actionType==='delete_category'||actionType==='delete_product') { tg.showAlert(actionType==='delete_category'?'Danh mục:\n'+cats:'Sản phẩm:\n'+products); fields.id=Number(adminAsk('Nhập ID cần xóa:')); if(!fields.id)return; if(!confirm('Bạn chắc chắn muốn xóa? Thao tác này không thể hoàn tác.'))return; }
                 const r=await adminApi(actionType,fields); tg.showAlert(r.message || 'Đã thực hiện thành công.');
-                await loadCatalog(); await refreshAccountData();
+                invalidateCatalogCache();
+                await loadCatalog({force:true}); await refreshAccountData();
             } catch(e) { tg.showAlert(e.message || 'Không thể thực hiện thao tác Admin.'); }
         }
         async function adminAddKeyFlow() {
@@ -780,7 +856,8 @@
                 const option_id=Number(adminAsk('Nhập ID gói sản phẩm:')); if(!option_id)return;
                 const keys=adminAsk('Dán danh sách key (mỗi key một dòng):'); if(!keys)return;
                 const r=await adminApi('add_keys',{option_id,keys}); tg.showAlert(r.message);
-                await loadCatalog();
+                invalidateCatalogCache();
+                await loadCatalog({force:true});
             } catch(e) { tg.showAlert(e.message || 'Không thể thêm key.'); }
         }
 
@@ -850,6 +927,32 @@
             document.getElementById('file-selector-input').click();
         }
 
+        function compressImageDataUrl(imageUrl) {
+            return new Promise(resolve => {
+                const image = new Image();
+                image.onload = () => {
+                    try {
+                        const maxSide = 640;
+                        const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+                        if (scale === 1 && imageUrl.length < 240000) return resolve(imageUrl);
+                        const canvas = document.createElement('canvas');
+                        canvas.width = Math.max(1, Math.round(image.width * scale));
+                        canvas.height = Math.max(1, Math.round(image.height * scale));
+                        const context = canvas.getContext('2d');
+                        if (!context) return resolve(imageUrl);
+                        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+                        const compressed = canvas.toDataURL('image/webp', 0.82);
+                        resolve(compressed.startsWith('data:image/webp,') && compressed.length < imageUrl.length
+                            ? compressed : imageUrl);
+                    } catch (_) {
+                        resolve(imageUrl);
+                    }
+                };
+                image.onerror = () => resolve(imageUrl);
+                image.src = imageUrl;
+            });
+        }
+
         function handleFileSelected(event) {
             let file = event.target.files[0];
             if (file) {
@@ -860,6 +963,7 @@
                         tg.showAlert('Tệp đã chọn không phải ảnh hợp lệ.');
                         return;
                     }
+                    imageUrl = await compressImageDataUrl(imageUrl);
                     if (imageUrl.length > 2500000) {
                         tg.showAlert('Dữ liệu ảnh vượt quá 2,5 MB. Vui lòng chọn ảnh nhỏ hơn.');
                         return;
@@ -883,6 +987,8 @@
                                 cat.icon = imageUrl;
                                 renderCategoriesList();
                                 renderAdminCategoriesList();
+                                catalogFetchedAt = Date.now();
+                                saveCatalogCache();
                                 tg.showAlert(result.message || `Đã lưu ảnh cho mục "${cat.name}".`);
                             } catch (err) {
                                 tg.showAlert('Không lưu được ảnh danh mục: ' + err.message);
@@ -956,8 +1062,8 @@
                         message: `Đơn #${result.purchase_id} · ${Number(result.total).toLocaleString('vi-VN')}đ\\nMua thành công! Hãy quay lại bot Telegram để nhận key.`,
                         buttons: [{type: 'ok'}]
                     });
-                    await refreshAccountData();
-                    await loadCatalog();
+                    void refreshAccountData();
+                    void loadCatalog({force:true});
                     document.getElementById('checkout-box').style.display = 'none';
                 } catch (error) {
                     tg.showAlert(error.message);
@@ -1074,7 +1180,7 @@
         }
 
         refreshAccountData();
-        loadCatalog();
+        loadCatalog().finally(finishInitialLoading);
         if (balanceRefreshInterval) clearInterval(balanceRefreshInterval);
         balanceRefreshInterval = setInterval(refreshAccountData, 15000);
     </script>
