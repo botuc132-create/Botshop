@@ -26,7 +26,7 @@ from psycopg_pool import ConnectionPool
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / '.env')
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, MessageEntity, WebAppInfo, MenuButtonWebApp
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove, MessageEntity, WebAppInfo, MenuButtonWebApp
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ContextTypes, filters,
@@ -67,16 +67,7 @@ def quick_button(text, style='success', **kwargs):
     )
 
 
-USER_KB = (
-    ReplyKeyboardMarkup(
-        [[KeyboardButton(
-            'Mua Key',
-            web_app=WebAppInfo(url=MINI_APP_URL),
-        )]],
-        resize_keyboard=True, is_persistent=True
-    )
-    if MINI_APP_URL.startswith('https://') else ReplyKeyboardRemove()
-)
+USER_KB = ReplyKeyboardRemove()
 
 async def configure_miniapp_menu_button(application):
     if not MINI_APP_URL.startswith('https://'):
@@ -337,7 +328,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(user_menu_text(user, balance).replace(f'🆔 ID: {user.id}', f'🆔 ID: <code>{user.id}</code>'), reply_markup=main_menu_markup(), parse_mode='HTML')
         if MINI_APP_URL.startswith('https://'):
             await message.reply_text(
-                '👇 Nhấn nút “Mua Key” bên dưới để mở Mini App.',
+                '👇 Nhấn nút Menu cạnh ô nhập tin nhắn để mở Mini App.',
                 reply_markup=USER_KB
             )
     except Exception:
@@ -1393,7 +1384,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         await msg.reply_text(f'✅ Đã thêm {added}/{len(keys)} key thành công. Kho hiện có: {stock} key.', reply_markup=ADMIN_KB)
         if added:
-            announcement = (f"🔥 CÓ HÀNG MỚI VỀ! 🔥\n━━━━━━━━━━━━━━━━━━\n📁 Danh mục: {info['category_name']}\n🎮 Sản phẩm: {info['product_name']}\n🔢 Số lượng: {added} sản phẩm đã được cập nhật!\n\n👉 Nhấn nút bên dưới để mở Mini App và mua ngay!")
+            announcement = (f"🔥 CÓ HÀNG MỚI VỀ! 🔥\n━━━━━━━━━━━━━━━━━━\n📁 Danh mục: {info['category_name']}\n🎮 Sản phẩm: {info['duration_label']}\n🔢 Số lượng: {added} sản phẩm đã được cập nhật!\n\n👉 Nhấn nút bên dưới để mở Mini App và mua ngay!")
             shop_markup = InlineKeyboardMarkup([[InlineKeyboardButton('🚀 MỞ MINI APP', web_app=WebAppInfo(url=MINI_APP_URL))]]) if MINI_APP_URL.startswith('https://') else None
             sent = await broadcast(context.bot, announcement, reply_markup=shop_markup)
             await msg.reply_text(f'📢 Đã thông báo tới {sent} người dùng.')
@@ -1761,9 +1752,8 @@ async def api_admin_action(request: Request):
             if added_keys and stock_info:
                 announcement=(f"🔥 CÓ HÀNG MỚI VỀ! 🔥\n━━━━━━━━━━━━━━━━━━\n"
                     f"📁 Danh mục: {stock_info['category_name']}\n"
-                    f"🎮 Sản phẩm: {stock_info['product_name']}\n"
-                    f"⏳ Thời hạn: {stock_info['duration_label']}\n"
-                    f"🔢 Số lượng: {added_keys} key mới đã được cập nhật!\n\n"
+                    f"🎮 Sản phẩm: {stock_info['duration_label']}\n"
+                    f"🔢 Số lượng: {added_keys} sản phẩm đã được cập nhật!\n\n"
                     f"👉 Nhấn nút bên dưới để mở Mini App và mua ngay!")
                 try:
                     sent,total=await broadcast_new_stock_http(announcement)
