@@ -26,7 +26,7 @@ from psycopg_pool import ConnectionPool
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / '.env')
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, MessageEntity, WebAppInfo
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, MessageEntity, WebAppInfo
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ContextTypes, filters,
@@ -54,10 +54,13 @@ web_app = FastAPI(title='Jinny Cheat Mini App API')
 telegram_application = None
 
 
-USER_KB = ReplyKeyboardMarkup(
-    ([[KeyboardButton('🛍 Mua Key', web_app=WebAppInfo(url=MINI_APP_URL))],
-      [KeyboardButton('↩️ Trở về')]] if MINI_APP_URL.startswith('https://') else [[KeyboardButton('↩️ Trở về')]]),
-    resize_keyboard=True, is_persistent=True)
+USER_KB = (
+    ReplyKeyboardMarkup(
+        [[KeyboardButton('🛍 Mua Key', web_app=WebAppInfo(url=MINI_APP_URL))]],
+        resize_keyboard=True, is_persistent=True
+    )
+    if MINI_APP_URL.startswith('https://') else ReplyKeyboardRemove()
+)
 
 ADMIN_KB = InlineKeyboardMarkup([
     [InlineKeyboardButton('📢 Thông báo', callback_data='adm:broadcast')],
@@ -154,6 +157,7 @@ def init_db():
         "ALTER TABLE product_options ADD COLUMN IF NOT EXISTS sell_price BIGINT NOT NULL DEFAULT 0",
         "ALTER TABLE purchases ADD COLUMN IF NOT EXISTS supplier_order_code TEXT",
         "ALTER TABLE categories ADD COLUMN IF NOT EXISTS guide_url TEXT",
+        "ALTER TABLE categories ADD COLUMN IF NOT EXISTS icon TEXT",
         "CREATE TABLE IF NOT EXISTS bot_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_at TEXT NOT NULL)",
         "INSERT INTO bot_settings(setting_key,setting_value,updated_at) VALUES('maintenance','off',NOW()::text) ON CONFLICT(setting_key) DO NOTHING",
         """CREATE TABLE IF NOT EXISTS categories (
@@ -303,6 +307,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await message.reply_text('🛠 Bot đang bảo trì. Vui lòng quay lại sau.', reply_markup=USER_KB)
             return
         balance = row['balance'] if row else 0
+        await message.reply_text('✅ Đã gỡ nút Trở về cũ khỏi bàn phím.', reply_markup=ReplyKeyboardRemove())
         await message.reply_text(user_menu_text(user, balance).replace(f'🆔 ID: {user.id}', f'🆔 ID: <code>{user.id}</code>'), reply_markup=main_menu_markup(), parse_mode='HTML')
     except Exception:
         log.exception('Failed to handle /start')
@@ -1175,6 +1180,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message; text = (msg.text or '').strip(); flow = context.user_data.get('flow'); user = update.effective_user
     if text == '↩️ Trở về':
         context.user_data.clear()
+        await msg.reply_text('✅ Đã gỡ nút Trở về cũ.', reply_markup=ReplyKeyboardRemove())
         await send_main_menu(msg, user)
         return
     if user and not is_admin(update):
@@ -1360,8 +1366,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         await msg.reply_text(f'✅ Đã thêm {added}/{len(keys)} key thành công. Kho hiện có: {stock} key.', reply_markup=ADMIN_KB)
         if added:
-            announcement = (f"🔥 CÓ HÀNG MỚI VỀ! 🔥\n━━━━━━━━━━━━━━━━━━\n📁 Danh mục: {info['category_name']}\n🎮 Sản phẩm: {info['product_name']}\n🔢 Số lượng: {added} sản phẩm đã được cập nhật!\n\n👉 Nhấn nút Mở Shop bên dưới để vào mua ngay!")
-            shop_markup = InlineKeyboardMarkup([[InlineKeyboardButton('🛍 MỞ SHOP', web_app=WebAppInfo(url=MINI_APP_URL))]]) if MINI_APP_URL.startswith('https://') else None
+            announcement = (f"🔥 CÓ HÀNG MỚI VỀ! 🔥\n━━━━━━━━━━━━━━━━━━\n📁 Danh mục: {info['category_name']}\n🎮 Sản phẩm: {info['product_name']}\n🔢 Số lượng: {added} sản phẩm đã được cập nhật!\n\n👉 Nhấn nút bên dưới để mở Mini App và mua ngay!")
+            shop_markup = InlineKeyboardMarkup([[InlineKeyboardButton('🚀 MỞ MINI APP', web_app=WebAppInfo(url=MINI_APP_URL))]]) if MINI_APP_URL.startswith('https://') else None
             sent = await broadcast(context.bot, announcement, reply_markup=shop_markup)
             await msg.reply_text(f'📢 Đã thông báo tới {sent} người dùng.')
         return
@@ -1385,6 +1391,31 @@ def _telegram_http(method, payload=None):
     if not result.get('ok'):
         raise RuntimeError(str(result.get('description') or 'Telegram API error'))
     return result.get('result')
+
+
+async def broadcast_new_stock_http(text):
+    with db() as con:
+        users = con.execute('SELECT user_id FROM users WHERE is_locked=FALSE ORDER BY user_id').fetchall()
+    reply_markup = None
+    if MINI_APP_URL.startswith('https://'):
+        reply_markup = {
+            'inline_keyboard': [[{
+                'text': '🚀 MỞ MINI APP',
+                'web_app': {'url': MINI_APP_URL},
+            }]]
+        }
+    sent = 0
+    for user in users:
+        payload = {'chat_id': user['user_id'], 'text': text}
+        if reply_markup:
+            payload['reply_markup'] = reply_markup
+        try:
+            await asyncio.to_thread(_telegram_http, 'sendMessage', payload)
+            sent += 1
+        except Exception as exc:
+            log.info('Mini App stock announcement skipped a recipient (%s)', type(exc).__name__)
+        await asyncio.sleep(0.04)
+    return sent, len(users)
 
 
 def _telegram_init_user(request: Request):
@@ -1464,7 +1495,7 @@ async def api_me(request: Request):
 async def api_catalog(request: Request):
     user = _mini_user(request)
     with db() as con:
-        cats = con.execute('SELECT id,name,guide_url FROM categories ORDER BY id').fetchall()
+        cats = con.execute('SELECT id,name,guide_url,icon FROM categories ORDER BY id').fetchall()
         output=[]
         seller = con.execute('SELECT is_seller FROM users WHERE user_id=?', (user['id'],)).fetchone()
         for cat in cats:
@@ -1479,7 +1510,8 @@ async def api_catalog(request: Request):
                     'id':o['id'],'duration':o['duration'],'duration_label':o['duration_label'],
                     'price':int(o['sell_price'] if seller and seller['is_seller'] and o['sell_price'] else o['price']),
                     'stock':int(o['stock']),'shophenry':bool(o['shophenry_product_id'])} for o in opts]})
-            output.append({'id':cat['id'],'name':cat['name'],'guide_url':cat['guide_url'],'products':prod_out})
+            output.append({'id':cat['id'],'name':cat['name'],'guide_url':cat['guide_url'],
+                           'icon':cat['icon'] or '', 'products':prod_out})
     return {'categories':output}
 
 
@@ -1588,15 +1620,28 @@ async def api_admin_overview(request: Request):
 @web_app.post('/api/admin/action')
 async def api_admin_action(request: Request):
     admin=_mini_user(request,True); data=await request.json(); action=str(data.get('action',''))
+    added_keys = 0
+    stock_info = None
+    add_keys_result = None
     try:
         with db() as con:
             if action=='set_ff_app_icon':
                 image_data=str(data.get('image_data') or '')
                 if not image_data.startswith('data:image/') or len(image_data)>2_500_000:
                     raise HTTPException(status_code=400,detail='Ảnh không hợp lệ hoặc vượt quá dung lượng cho phép.')
-                con.execute("""INSERT INTO bot_settings(setting_key,setting_value) VALUES('miniapp_ff_icon',?)
-                    ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value""",(image_data,))
+                stamp = now()
+                con.execute("""INSERT INTO bot_settings(setting_key,setting_value,updated_at) VALUES('miniapp_ff_icon',?,?)
+                    ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=EXCLUDED.updated_at""",
+                    (image_data,stamp))
                 return {'success':True,'message':'Đã lưu ảnh Free Fire. Ảnh sẽ hiển thị cho tất cả người dùng.'}
+            if action=='set_category_icon':
+                category_id=int(data.get('category_id'))
+                image_data=str(data.get('image_data') or '')
+                if not image_data.startswith('data:image/') or len(image_data)>2_500_000:
+                    raise HTTPException(status_code=400,detail='Ảnh không hợp lệ hoặc vượt quá dung lượng cho phép.')
+                row=con.execute('UPDATE categories SET icon=? WHERE id=? RETURNING id',(image_data,category_id)).fetchone()
+                if not row: raise HTTPException(status_code=404,detail='Không tìm thấy danh mục cần cập nhật ảnh.')
+                return {'success':True,'message':'Đã lưu ảnh danh mục. Ảnh sẽ hiển thị cho tất cả người dùng.'}
             if action=='stats':
                 return {'stats':con.execute("SELECT (SELECT COUNT(*) FROM users) AS users,(SELECT COALESCE(SUM(amount),0) FROM deposits WHERE status='approved') AS deposits,(SELECT COALESCE(SUM(balance),0) FROM users) AS balances,(SELECT COUNT(*) FROM purchases) AS purchases").fetchone()}
             if action=='usercheck':
@@ -1659,11 +1704,13 @@ async def api_admin_action(request: Request):
             if action=='add_keys':
                 oid=int(data.get('option_id')); keys=clean_lines(str(data.get('keys','')))
                 if not keys: raise HTTPException(status_code=400,detail='Không có key hợp lệ.')
-                added=0
                 for key in keys:
-                    cur=con.execute("INSERT INTO product_keys(option_id,key_value,added_by,added_at) VALUES(?,?,?,?) ON CONFLICT(key_value) DO NOTHING",(oid,key,admin['id'],now())); added+=cur.rowcount
+                    cur=con.execute("INSERT INTO product_keys(option_id,key_value,added_by,added_at) VALUES(?,?,?,?) ON CONFLICT(key_value) DO NOTHING",(oid,key,admin['id'],now())); added_keys+=cur.rowcount
                 stock=con.execute("SELECT COUNT(*) AS n FROM product_keys WHERE option_id=? AND status='available'",(oid,)).fetchone()['n']
-                return {'success':True,'message':f'Đã thêm {added}/{len(keys)} key. Kho hiện có {stock} key.'}
+                stock_info=con.execute('''SELECT c.name AS category_name,p.name AS product_name,po.duration_label
+                    FROM product_options po JOIN products p ON p.id=po.product_id
+                    JOIN categories c ON c.id=p.category_id WHERE po.id=?''',(oid,)).fetchone()
+                add_keys_result={'success':True,'message':f'Đã thêm {added_keys}/{len(keys)} key. Kho hiện có {stock} key.'}
             if action=='stock':
                 pid=int(data.get('product_id'))
                 rows=con.execute("SELECT po.id,po.duration_label,po.price,po.sell_price,COUNT(pk.id) FILTER (WHERE pk.status='available') AS available,COUNT(pk.id) AS total FROM product_options po LEFT JOIN product_keys pk ON pk.option_id=po.id WHERE po.product_id=? GROUP BY po.id ORDER BY po.id",(pid,)).fetchall()
@@ -1677,6 +1724,21 @@ async def api_admin_action(request: Request):
                 if not message or len(message)>4000: raise HTTPException(status_code=400,detail='Nội dung thông báo trống hoặc quá dài.')
                 ids=[r['user_id'] for r in con.execute('SELECT user_id FROM users WHERE is_locked=FALSE ORDER BY user_id').fetchall()]
             else: ids=[]
+        if action=='add_keys':
+            if added_keys and stock_info:
+                announcement=(f"🔥 CÓ HÀNG MỚI VỀ! 🔥\n━━━━━━━━━━━━━━━━━━\n"
+                    f"📁 Danh mục: {stock_info['category_name']}\n"
+                    f"🎮 Sản phẩm: {stock_info['product_name']}\n"
+                    f"⏳ Thời hạn: {stock_info['duration_label']}\n"
+                    f"🔢 Số lượng: {added_keys} key mới đã được cập nhật!\n\n"
+                    f"👉 Nhấn nút bên dưới để mở Mini App và mua ngay!")
+                try:
+                    sent,total=await broadcast_new_stock_http(announcement)
+                    add_keys_result['message']+=f' Đã thông báo tới {sent}/{total} người dùng.'
+                except Exception:
+                    log.exception('Could not send the Mini App stock announcement')
+                    add_keys_result['message']+=' Chưa gửi được thông báo; key đã được lưu thành công.'
+            return add_keys_result
         if action=='broadcast':
             sent=0; failed=0
             for uid in ids:

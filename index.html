@@ -854,24 +854,44 @@
             let file = event.target.files[0];
             if (file) {
                 let reader = new FileReader();
-                reader.onload = function(e) {
-                    let imageUrl = e.target.result;
+                reader.onload = async function(e) {
+                    let imageUrl = String(e.target.result || '');
+                    if (!imageUrl.startsWith('data:image/')) {
+                        tg.showAlert('Tệp đã chọn không phải ảnh hợp lệ.');
+                        return;
+                    }
+                    if (imageUrl.length > 2500000) {
+                        tg.showAlert('Dữ liệu ảnh vượt quá 2,5 MB. Vui lòng chọn ảnh nhỏ hơn.');
+                        return;
+                    }
                     if (isEditingAppImage) {
-                        ffAppIconUrl = imageUrl;
-                        let imgTag = document.getElementById('ff-app-img');
-                        imgTag.src = imageUrl;
-                        imgTag.style.display = 'block';
-                        document.getElementById('ff-app-default-icon').style.display = 'none';
-                        adminApi('set_ff_app_icon', {image_data:imageUrl}).then(r => tg.showAlert(r.message || 'Đã lưu ảnh Free Fire cho tất cả người dùng.')).catch(err => tg.showAlert('Không lưu được ảnh: ' + err.message));
+                        try {
+                            const result = await adminApi('set_ff_app_icon', {image_data:imageUrl});
+                            applyFFAppIcon(imageUrl);
+                            tg.showAlert(result.message || 'Đã lưu ảnh Free Fire cho tất cả người dùng.');
+                        } catch (err) {
+                            tg.showAlert('Không lưu được ảnh: ' + err.message);
+                        }
                     } else if (activeEditingCatId !== null) {
                         let cat = categoriesData.find(c => c.id === activeEditingCatId);
                         if (cat) {
-                            cat.icon = imageUrl;
-                            renderCategoriesList();
-                            renderAdminCategoriesList();
-                            tg.showAlert(`Đã thêm/đổi ảnh thành công cho mục "${cat.name}"!`);
+                            try {
+                                const result = await adminApi('set_category_icon', {
+                                    category_id: cat.id,
+                                    image_data: imageUrl
+                                });
+                                cat.icon = imageUrl;
+                                renderCategoriesList();
+                                renderAdminCategoriesList();
+                                tg.showAlert(result.message || `Đã lưu ảnh cho mục "${cat.name}".`);
+                            } catch (err) {
+                                tg.showAlert('Không lưu được ảnh danh mục: ' + err.message);
+                            }
                         }
                     }
+                };
+                reader.onerror = function() {
+                    tg.showAlert('Không đọc được tệp ảnh. Vui lòng thử lại.');
                 };
                 reader.readAsDataURL(file);
             }
