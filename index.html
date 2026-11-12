@@ -191,60 +191,6 @@
         .purchase-success-card button { width:100%; min-height:42px; margin-top:8px; border:1px solid #2e83b8; border-radius:10px; background:#17669a; color:white; font-weight:900; font-size:14px; }
         .purchase-success-card button.secondary { background:#172d46; border-color:#38516b; }
 
-    
-        /* Thu gon cac the giao dien theo anh tham chieu */
-        .app-item {
-            padding: 7px 6px !important;
-            min-height: 0 !important;
-        }
-        .app-logo {
-            width: 44px !important;
-            height: 44px !important;
-            margin-bottom: 5px !important;
-            border-radius: 10px !important;
-        }
-        .app-name { font-size: 11px !important; }
-        .app-count { font-size: 9px !important; margin-top: 2px !important; }
-
-        /* O chon muc tren man hinh chinh */
-        .select-category-box {
-            padding: 8px 10px !important;
-            border-radius: 12px !important;
-            margin-bottom: 10px !important;
-        }
-        .select-cat-left { gap: 9px !important; }
-        .select-cat-icon {
-            width: 50px !important;
-            height: 50px !important;
-            flex-basis: 50px !important;
-            border-radius: 12px !important;
-        }
-
-        /* Cac dong trong cua so CHON MUC: giam chieu cao hon mot nua */
-        .category-option-item {
-            padding: 5px 9px !important;
-            min-height: 0 !important;
-            margin-bottom: 7px !important;
-            border-radius: 12px !important;
-        }
-        .category-option-item .select-cat-icon {
-            width: 38px !important;
-            height: 38px !important;
-            flex: 0 0 38px !important;
-            border-radius: 9px !important;
-        }
-        .category-option-item > div:first-child { gap: 9px !important; }
-        .category-option-item h5 { font-size: 12px !important; line-height: 1.2 !important; }
-        .category-option-item p { font-size: 9px !important; margin-top: 2px !important; }
-
-        /* Bo vien o banner Mua Key co logo chia khoa */
-        .banner-card { border: 0 !important; }
-
-        /* Nen man hinh cho luc dang tai dong bo voi nen xanh ben trong */
-        #loading-screen {
-            background: radial-gradient(ellipse at center, #172840 0%, #091321 68%) !important;
-        }
-
     </style>
 </head>
 <body>
@@ -1361,3 +1307,56 @@
 
 </body>
 </html>
+
+<style>
+/* Tinh chỉnh theo ảnh mới nhất */
+/* Bỏ hẳn banner Mua Key khoanh phía trên */
+#tab-buy > .banner-card { display: none !important; }
+
+/* Ô Chọn Mục thấp hơn một chút, giữ icon cân đối */
+#select-category-container .select-category-box {
+    padding: 10px 12px !important;
+    min-height: 0 !important;
+}
+#selected-cat-icon-wrap {
+    width: 76px !important;
+    height: 76px !important;
+    flex: 0 0 76px !important;
+    border-radius: 17px !important;
+}
+#selected-cat-default-icon { width: 58px !important; height: 58px !important; }
+#select-category-container .select-cat-left { gap: 10px !important; }
+
+/* Ô Free Fire nhỏ lại cả khung viền xanh và ảnh */
+#app-ff {
+    width: 100% !important;
+    max-width: 132px !important;
+    justify-self: start !important;
+    box-sizing: border-box !important;
+    padding: 8px 6px !important;
+}
+#app-ff .app-logo,
+#ff-app-default-icon {
+    width: 46px !important;
+    height: 46px !important;
+    border-radius: 11px !important;
+}
+#app-ff .app-name { font-size: 11px !important; }
+#app-ff .app-count { font-size: 9px !important; }
+#app-ff .edit-app-img-btn { font-size: 8px !important; padding: 3px 5px !important; }
+
+/* Các mục trong cửa sổ Chọn Mục to lại nhẹ so với bản trước */
+#category-modal .category-option-item {
+    padding: 14px 16px !important;
+    margin-bottom: 11px !important;
+    min-height: 72px !important;
+}
+#category-modal .category-option-item .select-cat-icon {
+    width: 58px !important;
+    height: 58px !important;
+    flex: 0 0 58px !important;
+    border-radius: 12px !important;
+}
+#category-modal .category-option-item h5 { font-size: 14px !important; }
+#category-modal .category-option-item p { font-size: 11px !important; }
+</style>
