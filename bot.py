@@ -1249,15 +1249,22 @@ async def handle_deposit_review(q, context, data):
                 row = con.execute('SELECT balance FROM users WHERE user_id=?', (dep['user_id'],)).fetchone()
                 con.execute("INSERT INTO balance_transactions(user_id,admin_id,action,amount,balance_after,note,created_at) VALUES(?,?,'deposit',?,?,?,?)", (dep['user_id'], q.from_user.id, dep['amount'], row['balance'], f"Duyệt nạp #{deposit_id}", now()))
                 con.execute("UPDATE deposits SET status='approved' WHERE id=?", (deposit_id,))
-                username_text = '@' + dep['username'] if dep['username'] else 'Không có username'
-                result = (f"🎉 DUYỆT NẠP TIỀN THÀNH CÔNG!\n\n🧾 Đơn thứ tự: #{deposit_id}\n💰 Đã cộng: {dep['amount']:,}đ\n👤 Người dùng: {escape(dep['full_name'] or 'Không có tên')}\n📛 Username: {escape(username_text)}\n🆔 ID: <code>{dep['user_id']}</code>\n💳 Số dư hiện tại: {row['balance']:,}đ")
+                username_text = '@' + dep['username'] if dep['username'] else 'Không có'
+                result = (f"🎉 NẠP TIỀN THÀNH CÔNG\n\nID: <code>{dep['user_id']}</code>\nUsername: {escape(username_text)}\nFull name: {escape(dep['full_name'] or 'Không có')}\n+{dep['amount']:,}\nSD: {row['balance']:,}đ\nND: <code>{escape(dep['note'] or '')}</code>")
                 user_notice = f"✅ Yêu cầu nạp tiền #{deposit_id} đã được admin duyệt. Số tiền {dep['amount']:,}đ đã cộng vào tài khoản."
             else:
                 con.execute("UPDATE deposits SET status='rejected' WHERE id=?", (deposit_id,))
                 result = f"❌ Đã từ chối đơn nạp #{deposit_id}."
                 user_notice = f"❌ Yêu cầu nạp tiền #{deposit_id} đã bị từ chối. Nếu bạn đã chuyển tiền, vui lòng liên hệ admin."
-        await q.edit_message_text(result, parse_mode='HTML' if action == 'approve' else None)
-        try: await context.bot.send_message(chat_id=dep['user_id'], text=user_notice)
+        success_markup = None
+        if action == 'approve' and MINI_APP_URL.startswith('https://'):
+            success_markup = InlineKeyboardMarkup([[InlineKeyboardButton('🛍 MỞ MINI APP MUA HÀNG', web_app=WebAppInfo(url=MINI_APP_URL))]])
+        await q.edit_message_text(result, parse_mode='HTML' if action == 'approve' else None, reply_markup=success_markup)
+        try:
+            if action == 'approve':
+                await context.bot.send_message(chat_id=dep['user_id'], text=result, parse_mode='HTML', reply_markup=success_markup)
+            else:
+                await context.bot.send_message(chat_id=dep['user_id'], text=user_notice)
         except Exception: log.exception('Cannot notify user about deposit %s', deposit_id)
     except Exception:
         log.exception('Deposit review failed for %s', deposit_id)
@@ -1330,8 +1337,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         payment_note = ('Bot sẽ trừ số dư nội bộ; ShopHenry cấp key.' if o.get('shophenry_product_id') else 'Bot sẽ kiểm tra kho và số dư trước khi trừ tiền.')
         await msg.reply_text(f"🧾 XÁC NHẬN MUA HÀNG\n\n📁 Danh mục: {escape(o['category_name'])}\n📦 Sản phẩm: {escape(o['product_name'])}\n⏳ Thời hạn: {escape(o['duration_label'])}\n🔢 Số lượng: {p['quantity']}\n💰 Giá bán: {p['total']:,}đ\n\n{payment_note}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('✅ XÁC NHẬN MUA', callback_data='shop:confirm')], [InlineKeyboardButton('❌ HỦY', callback_data='shop:cancel')], [InlineKeyboardButton('↩️ Trở về', callback_data='menu:home')]])); return
     if flow == 'deposit_amount':
-        if not text.isdigit() or not 1 <= int(text) <= 1_000_000_000:
-            await msg.reply_text('Số tiền không hợp lệ. Nhập số nguyên từ 1 đến 1.000.000.000 VNĐ:'); return
+        if not text.isdigit() or not 2_000 <= int(text) <= 10_000_000:
+            await msg.reply_text('Số tiền nạp phải từ 2.000đ đến 10.000.000đ. Vui lòng nhập lại:'); return
         amount = int(text); uid = user.id
         try:
             with db() as con:
@@ -1716,18 +1723,17 @@ async def api_create_deposit(request: Request):
     user=_mini_user(request); payload=await request.json()
     try: amount=int(payload.get('amount'))
     except Exception: raise HTTPException(status_code=400,detail='Số tiền không hợp lệ.')
-    if amount<2000 or amount>1000000000: raise HTTPException(status_code=400,detail='Số tiền nạp từ 2.000đ đến 1.000.000.000đ.')
+    if amount<2000 or amount>10000000: raise HTTPException(status_code=400,detail='Số tiền nạp từ 2.000đ đến 10.000.000đ.')
     with db() as con:
-        # Serialize concurrent create requests for the same account.
+        # Khóa tài khoản khi tạo mã để tránh hai yêu cầu đồng thời.
         con.execute('SELECT user_id FROM users WHERE user_id=? FOR UPDATE',(user['id'],)).fetchone()
         con.execute("""UPDATE deposits SET status='expired'
             WHERE user_id=? AND status='pending'
               AND created_at::timestamptz < NOW() - INTERVAL '5 minutes'""",(user['id'],))
-        recent=con.execute("SELECT id,status FROM deposits WHERE user_id=? AND status IN ('pending','submitted') ORDER BY id DESC LIMIT 1",(user['id'],)).fetchone()
+        # Đơn đã gửi Admin không được dùng để chặn việc tạo QR mới; chỉ chặn QR pending còn hạn.
+        recent=con.execute("SELECT id FROM deposits WHERE user_id=? AND status='pending' ORDER BY id DESC LIMIT 1",(user['id'],)).fetchone()
         if recent:
-            message = ('Bot đang xét duyệt đơn nạp tiền của bạn. Vui lòng không gửi spam yêu cầu cho Admin.'
-                       if recent['status']=='submitted' else 'Bạn đang có mã nạp tiền còn hiệu lực. Hãy dùng mã hiện tại hoặc đợi mã hết hạn.')
-            raise HTTPException(status_code=409,detail=message)
+            raise HTTPException(status_code=409,detail='Bạn đang có mã nạp tiền còn hiệu lực. Hãy dùng mã hiện tại hoặc đợi mã hết hạn.')
         row=con.execute("INSERT INTO deposits(user_id,amount,status,note,created_at) VALUES(?,?,'pending','',?) RETURNING id",(user['id'],amount,now())).fetchone()
         did=int(row['id']); memo=f'{QR_MEMO_SUFFIX}{user["id"]}D{did}'
         con.execute('UPDATE deposits SET note=? WHERE id=?',(memo,did))
@@ -1741,8 +1747,11 @@ async def api_submit_deposit(deposit_id: int, request: Request):
         dep=con.execute('SELECT d.*,u.full_name,u.username FROM deposits d JOIN users u ON u.user_id=d.user_id WHERE d.id=? AND d.user_id=? FOR UPDATE',(deposit_id,user['id'])).fetchone()
         if not dep: raise HTTPException(status_code=404,detail='Không tìm thấy đơn nạp.')
         if dep['status']=='submitted':
-            return {'success':True,'already_submitted':True,'message':'Bot đang xét duyệt đơn nạp tiền của bạn. Vui lòng không gửi spam yêu cầu cho Admin.'}
+            return {'success':True,'already_submitted':True,'message':'Đơn nạp này đã được gửi Admin xét duyệt.'}
         if dep['status']!='pending': raise HTTPException(status_code=400,detail='Đơn nạp đã được xử lý hoặc hết hạn.')
+        other=con.execute("SELECT id FROM deposits WHERE user_id=? AND status='submitted' AND id<>? ORDER BY id DESC LIMIT 1",(user['id'],deposit_id)).fetchone()
+        if other:
+            raise HTTPException(status_code=409,detail=f'Đơn nạp #{other["id"]} đang chờ Admin xét duyệt. Vui lòng đợi đơn đó được xử lý trước khi gửi mã mới.')
         con.execute("UPDATE deposits SET status='submitted' WHERE id=?",(deposit_id,))
     body=(f'💳 YÊU CẦU XÁC NHẬN NẠP TIỀN\n\n🧾 Mã đơn: #{deposit_id}\n💰 Số tiền: {dep["amount"]:,}đ\n📝 Nội dung CK: {dep["note"]}\n👤 Tên: {dep["full_name"] or "Không có"}\n🆔 ID: {user["id"]}\n📛 Username: @{dep["username"] or "Không có"}\n\nKiểm tra giao dịch ngân hàng trước khi duyệt.')
     kb={'inline_keyboard':[[{'text':'✅ DUYỆT','callback_data':f'deposit:approve:{deposit_id}'},{'text':'❌ TỪ CHỐI','callback_data':f'deposit:reject:{deposit_id}'}]]}

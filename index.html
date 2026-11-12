@@ -165,9 +165,17 @@
         .balance-usdt { display:none !important; }
         .icon-action-btn { display:none !important; }
         .buy-now-btn { min-height:52px; padding:15px 12px; font-size:15px; }
-        .app-item, .select-category-box, .package-card { padding-top:16px; padding-bottom:16px; }
+        .app-item { padding:10px 8px !important; }
+        .package-card { padding:10px 12px !important; }
+        .select-category-box { padding-top:16px; padding-bottom:16px; }
         .app-logo { width:58px; height:58px; }
-        .progress-bar-container { height:4px; }
+        .progress-bar-container { height:2px; border:0; border-radius:2px; }
+        .progress-bar-fill { box-shadow:0 0 5px rgba(0,229,168,.35); }
+        /* Tắt lớp highlight trắng mặc định khi chạm trong Android WebView/Telegram. */
+        *, *::before, *::after { -webkit-tap-highlight-color: transparent !important; }
+        button, .app-item, .select-category-box, .package-card, .category-option-item { outline:none; -webkit-tap-highlight-color:transparent !important; touch-action:manipulation; }
+        button:focus, button:focus-visible, .app-item:focus, .package-card:focus { outline:none !important; box-shadow:none; }
+        button:active, .app-item:active, .select-category-box:active, .package-card:active, .category-option-item:active { filter:none; }
         .kho-card { padding:12px 10px; }
         .kho-item { padding:10px; margin-bottom:9px; border-radius:12px; }
         .key-row { display:flex; flex-direction:column; align-items:stretch; gap:7px; padding:9px 0; }
@@ -328,7 +336,7 @@
             <p class="deposit-desc">Số dư được cập nhật sau khi Admin xác nhận tiền đã vào tài khoản.</p>
             
             <div class="amount-input-box">
-                <input type="number" id="deposit-amount" placeholder="Nhập số tiền (Tối thiểu 2.000đ)">
+                <input type="number" id="deposit-amount" min="2000" max="10000000" step="1" inputmode="numeric" placeholder="Nhập số tiền (2.000đ – 10.000.000đ)">
             </div>
             
             <button class="qr-btn" onclick="createDepositQR()">TẠO MÃ QR NẠP</button>
@@ -1176,8 +1184,8 @@
 
         async function createDepositQR() {
             const amount = Number(document.getElementById('deposit-amount').value);
-            if (!Number.isSafeInteger(amount) || amount < 2000) {
-                tg.showAlert('Vui lòng nhập số tiền tối thiểu từ 2.000đ!');
+            if (!Number.isSafeInteger(amount) || amount < 2000 || amount > 10000000) {
+                tg.showAlert('Số tiền nạp phải từ 2.000đ đến 10.000.000đ.');
                 return;
             }
             const button = document.querySelector('.qr-btn');
