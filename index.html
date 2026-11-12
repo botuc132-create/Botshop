@@ -30,21 +30,21 @@
 
         #loading-screen {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: radial-gradient(ellipse at center, #071719 0%, #050a14 62%);
+            background: radial-gradient(ellipse at center, #092b50 0%, #06172d 62%, #050a14 100%);
             display: flex; flex-direction: column; justify-content: center; align-items: center;
             z-index: 9999; transition: opacity 0.3s ease;
         }
         .loading-spinner {
-            width: 60px; height: 60px; border: 2px solid rgba(0,229,168,0.1);
-            border-top-color: #00e5a8; border-right-color: rgba(0,229,168,0.45);
-            border-radius: 50%; box-shadow: 0 0 18px rgba(0,229,168,0.18);
+            width: 60px; height: 60px; border: 2px solid rgba(0,162,255,0.14);
+            border-top-color: #00a2ff; border-right-color: rgba(57,185,255,0.55);
+            border-radius: 50%; box-shadow: 0 0 18px rgba(0,162,255,0.22);
             animation: spin 0.9s linear infinite; margin-bottom: 20px;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .loading-title { font-size: 18px; font-weight: 800; color: #fff; letter-spacing: 2px; margin: 0; }
         .loading-subtitle { font-size: 11px; color: var(--text-sub); margin: 6px 0 25px 0; letter-spacing: 1px; }
         .progress-bar-container { width: 240px; background-color: var(--box-bg); border-radius: 10px; height: 6px; overflow: hidden; border: 1px solid var(--border-color); margin-bottom: 12px; }
-        .progress-bar-fill { width: 0%; height: 100%; background: linear-gradient(90deg, #00b987, #00e5a8); box-shadow: 0 0 10px rgba(0,229,168,0.55); transition: width 0.18s ease; }
+        .progress-bar-fill { width: 0%; height: 100%; background: linear-gradient(90deg, #087bda, #24b7ff); box-shadow: 0 0 10px rgba(0,162,255,0.55); transition: width 0.18s ease; }
         .progress-info-row { width: 240px; display: flex; justify-content: space-between; font-size: 11px; color: var(--text-sub); font-weight: 700; }
 
         .tab-content { display: none; }
@@ -65,7 +65,7 @@
         .role-badge.admin { display: inline-block; background-color: #2c0b0b; color: var(--admin-red); border: 1px solid #461313; }
         .role-badge.customer { display:inline-block; background:#0b1d30; color:var(--accent-blue); border:1px solid #14365c; }
 
-        .banner-card { background: linear-gradient(120deg, #071c20 0%, var(--card-bg) 72%); border: 1px solid #173a3c; border-radius: 16px; padding: 14px 16px; display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+        .banner-card { background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 14px 4px; display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
         .banner-icon { width: 58px; height: 58px; flex: 0 0 58px; display: grid; place-items: center; border-radius: 16px; background: linear-gradient(145deg, #082b43, #0b1e32); border: 1px solid #16496c; box-shadow: inset 0 0 18px rgba(0,162,255,0.09), 0 0 18px rgba(0,162,255,0.08); }
         .banner-icon svg { width: 32px; height: 32px; fill: #00a2ff; filter: drop-shadow(0 0 7px rgba(0,162,255,0.55)); }
         .banner-text h2 { margin: 0; font-size: 16px; font-weight: 700; color: var(--text-main); }
@@ -119,7 +119,7 @@
         .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #102138; }
         .modal-title { font-size: 14px; font-weight: 800; color: var(--accent-blue); }
         .close-modal-btn { background-color: #102138; border: none; color: var(--accent-blue); width: 28px; height: 28px; border-radius: 50%; font-weight: bold; cursor: pointer; }
-        .category-option-item { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; cursor: pointer; }
+        .category-option-item { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 10px 13px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; cursor: pointer; }
 
         .deposit-card, .history-card, .overview-card, .ref-card, .kho-card, .admin-card { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 20px; padding: 16px 12px; margin-bottom: 16px; }
         .deposit-title, .admin-title { font-size: 15px; font-weight: 800; color: var(--accent-yellow); margin: 0 0 4px 0; }
@@ -170,12 +170,13 @@
         .select-category-box { padding-top:16px; padding-bottom:16px; }
         .app-logo { width:58px; height:58px; }
         .progress-bar-container { height:2px; border:0; border-radius:2px; }
-        .progress-bar-fill { box-shadow:0 0 5px rgba(0,229,168,.35); }
+        .progress-bar-fill { box-shadow:0 0 5px rgba(0,162,255,.4); }
         /* Tắt lớp highlight trắng mặc định khi chạm trong Android WebView/Telegram. */
         *, *::before, *::after { -webkit-tap-highlight-color: transparent !important; }
         button, .app-item, .select-category-box, .package-card, .category-option-item { outline:none; -webkit-tap-highlight-color:transparent !important; touch-action:manipulation; }
         button:focus, button:focus-visible, .app-item:focus, .package-card:focus { outline:none !important; box-shadow:none; }
         button:active, .app-item:active, .select-category-box:active, .package-card:active, .category-option-item:active { filter:none; }
+        .category-option-item .select-cat-icon { width:64px; height:64px; flex:0 0 64px; border-radius:12px; }
         .kho-card { padding:12px 10px; }
         .kho-item { padding:10px; margin-bottom:9px; border-radius:12px; }
         .key-row { display:flex; flex-direction:column; align-items:stretch; gap:7px; padding:9px 0; }
@@ -1310,8 +1311,15 @@
 
 <style>
 /* Tinh chỉnh theo ảnh mới nhất */
-/* Bỏ hẳn banner Mua Key khoanh phía trên */
-#tab-buy > .banner-card { display: none !important; }
+/* Giữ logo và chữ Mua Key, chỉ bỏ khung nổi bao quanh */
+#tab-buy > .banner-card {
+    display: flex !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 12px 4px !important;
+}
 
 /* Ô Chọn Mục thấp hơn một chút, giữ icon cân đối */
 #select-category-container .select-category-box {
@@ -1347,14 +1355,14 @@
 
 /* Các mục trong cửa sổ Chọn Mục to lại nhẹ so với bản trước */
 #category-modal .category-option-item {
-    padding: 14px 16px !important;
-    margin-bottom: 11px !important;
-    min-height: 72px !important;
+    padding: 12px 16px !important;
+    margin-bottom: 10px !important;
+    min-height: 68px !important;
 }
 #category-modal .category-option-item .select-cat-icon {
-    width: 58px !important;
-    height: 58px !important;
-    flex: 0 0 58px !important;
+    width: 56px !important;
+    height: 56px !important;
+    flex: 0 0 56px !important;
     border-radius: 12px !important;
 }
 #category-modal .category-option-item h5 { font-size: 14px !important; }
