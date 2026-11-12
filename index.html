@@ -84,7 +84,7 @@
 
         .select-category-box { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; margin-bottom: 14px; }
         .select-cat-left { display: flex; align-items: center; gap: 12px; }
-        .select-cat-icon { width: 38px; height: 38px; border-radius: 10px; object-fit: cover; }
+        .select-cat-icon { width: 72px; height: 72px; flex: 0 0 72px; border-radius: 16px; object-fit: cover; }
         .select-cat-text h4 { margin: 0; font-size: 13px; font-weight: 700; color: var(--text-main); }
         .select-cat-text p { margin: 2px 0 0 0; font-size: 11px; color: var(--text-sub); }
 
@@ -94,7 +94,7 @@
         .pkg-info h5 { margin: 0; font-size: 15px; font-weight: 800; color: var(--text-main); }
         .pkg-info p { margin: 4px 0 0 0; font-size: 11px; color: var(--text-sub); }
         .pkg-price-box { background-color: #060f1c; border: 1px solid #142a4a; border-radius: 10px; padding: 8px 14px; text-align: right; }
-        .pkg-new-price { font-size: 14px; color: var(--accent-blue); font-weight: 800; margin: 0; }
+        .pkg-new-price { font-size: 14px; color: #ffffff; font-weight: 800; margin: 0; }
 
         .checkout-box { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 16px; padding: 16px; margin-top: 16px; display: none; }
         .checkout-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
@@ -247,9 +247,12 @@
             <div id="select-category-container" style="display: none;">
                 <div class="select-category-box" onclick="openCategoryModal('buy')">
                     <div class="select-cat-left">
-                        <svg class="select-cat-icon" viewBox="0 0 24 24" fill="#00a2ff" style="background: #101c30; padding: 6px; border-radius: 10px;">
-                            <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
-                        </svg>
+                        <div id="selected-cat-icon-wrap" style="width:88px;height:88px;flex:0 0 88px;border-radius:20px;background:#101c30;display:grid;place-items:center;overflow:hidden;">
+                            <img id="selected-cat-icon" class="select-cat-icon" src="" alt="Ảnh danh mục" style="display:none;width:100%;height:100%;border-radius:0;">
+                            <svg id="selected-cat-default-icon" viewBox="0 0 24 24" width="68" height="68" fill="#00a2ff" style="filter:drop-shadow(0 3px 5px rgba(0,162,255,.28));">
+                                <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+                            </svg>
+                        </div>
                         <div class="select-cat-text">
                             <h4>Chọn Mục</h4>
                             <p id="selected-cat-name">Chưa chọn</p>
@@ -376,6 +379,7 @@
                 <button class="admin-action-btn" onclick="adminAction('edit_sell_price')">💰 Sửa Giá Sell</button>
                 <button class="admin-action-btn" onclick="adminAction('detail_product')">📋 Chi Tiết Sản Phẩm</button>
                 <button class="admin-action-btn" onclick="adminAction('add_duration')">➕ Thêm Thời Hạn</button>
+                <button class="admin-action-btn" onclick="adminAction('rename_duration')">📝 Đổi Thời Hạn</button>
                 <button class="admin-action-btn" onclick="adminAction('delete_duration')">🗑 Xóa Thời Hạn</button>
                 <button class="admin-action-btn" onclick="adminAction('rename_category')">📝 Đổi Tên Danh Mục</button>
                 <button class="admin-action-btn" onclick="adminAction('delete_category')">🗑 Xóa Danh Mục</button>
@@ -896,6 +900,7 @@
                 else if(actionType==='edit_price'||actionType==='edit_sell_price') { tg.showAlert('Các gói hiện có:\n'+options); fields.option_id=Number(adminAsk('ID gói cần sửa:')); fields.price=Number(adminAsk('Giá mới (VNĐ):')); if(!fields.option_id||!Number.isSafeInteger(fields.price)||fields.price<0)return; }
                 else if(actionType==='detail_product'||actionType==='stock') { tg.showAlert('Sản phẩm hiện có:\n'+products); const pid=Number(adminAsk('ID sản phẩm:')); if(!pid)return; const r=await adminApi('stock',{product_id:pid}); tg.showAlert((r.items||[]).map(x=>`${x.duration_label}: còn ${x.available}/${x.total} · Giá ${adminMoney(x.price)} · Sell ${adminMoney(x.sell_price)}`).join('\n')||'Không có gói sản phẩm.'); return; }
                 else if(actionType==='add_duration') { tg.showAlert('Sản phẩm hiện có:\n'+products); fields.product_id=Number(adminAsk('ID sản phẩm cần thêm thời hạn:')); fields.duration_label=adminAsk('Nhập thời hạn (ví dụ: 12 giờ, 2 ngày):'); if(!fields.product_id||!fields.duration_label)return; }
+                else if(actionType==='rename_duration') { tg.showAlert('Các gói thời hạn hiện có:\n'+options); fields.option_id=Number(adminAsk('ID gói cần đổi thời hạn:')); fields.duration_label=adminAsk('Nhập thời hạn mới (ví dụ: 1 ngày, 12 giờ):'); if(!fields.option_id||!fields.duration_label)return; }
                 else if(actionType==='delete_duration') { tg.showAlert('Các gói thời hạn hiện có:\n'+options); fields.option_id=Number(adminAsk('ID gói thời hạn cần xóa:')); if(!fields.option_id)return; if(!confirm('Xóa thời hạn này? Toàn bộ key gắn với gói sẽ bị xóa khỏi kho; lịch sử đơn mua vẫn được giữ.'))return; }
                 else if(actionType==='rename_category') { tg.showAlert('Danh mục hiện có:\n'+cats); fields.category_id=Number(adminAsk('ID danh mục cần đổi tên:')); fields.name=adminAsk('Tên danh mục mới:'); if(!fields.category_id||!fields.name)return; }
                 else if(actionType==='delete_category'||actionType==='delete_product') { tg.showAlert(actionType==='delete_category'?'Danh mục:\n'+cats:'Sản phẩm:\n'+products); fields.id=Number(adminAsk('Nhập ID cần xóa:')); if(!fields.id)return; if(!confirm('Bạn chắc chắn muốn xóa? Thao tác này không thể hoàn tác.'))return; }
@@ -921,6 +926,17 @@
             tg.HapticFeedback?.notificationOccurred('success');
             document.getElementById('selected-cat-name').innerText = catName;
             selectedCategory = categoriesData.find(c => c.name === catName) || null;
+            const categoryIcon = document.getElementById('selected-cat-icon');
+            const defaultCategoryIcon = document.getElementById('selected-cat-default-icon');
+            if (selectedCategory && selectedCategory.icon) {
+                categoryIcon.src = selectedCategory.icon;
+                categoryIcon.style.display = 'block';
+                defaultCategoryIcon.style.display = 'none';
+            } else {
+                categoryIcon.removeAttribute('src');
+                categoryIcon.style.display = 'none';
+                defaultCategoryIcon.style.display = 'block';
+            }
             selectedOptionId = null;
             selectedPkgName = '';
             const list = document.getElementById('packages-list');

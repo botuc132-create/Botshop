@@ -1061,6 +1061,28 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text('✅ Đã xóa thời hạn và key gắn với gói đó. Lịch sử đơn mua vẫn được giữ.', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ Quay lại Admin', callback_data='adm:menu')]]))
     elif data.startswith('adm:detailoption:'):
         oid = int(data.split(':')[2])
+        with db() as con:
+            opt = con.execute('SELECT po.*,p.id AS product_id,p.name AS product_name FROM product_options po JOIN products p ON p.id=po.product_id WHERE po.id=?', (oid,)).fetchone()
+        if not opt:
+            await q.answer('Gói sản phẩm không còn tồn tại.', show_alert=True); return
+        await q.edit_message_text(
+            f"📦 {opt['product_name']}\n⏳ Thời hạn: {opt['duration_label']}\n💰 Giá: {opt['price']:,}đ\n💰 Giá Sell: {opt['sell_price']:,}đ\n\nChọn thao tác:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('📝 Đổi thời hạn', callback_data=f"adm:renameoption:{oid}")],
+                [InlineKeyboardButton('✏️ Sửa giá thường', callback_data=f"adm:optionprice:{oid}")],
+                [InlineKeyboardButton('↩️ Quay lại', callback_data=f"adm:detailprod:{opt['product_id']}")]
+            ]))
+    elif data.startswith('adm:renameoption:'):
+        oid = int(data.split(':')[2])
+        with db() as con:
+            opt = con.execute('SELECT po.duration_label,p.id AS product_id,p.name AS product_name FROM product_options po JOIN products p ON p.id=po.product_id WHERE po.id=?', (oid,)).fetchone()
+        if not opt:
+            await q.answer('Gói sản phẩm không còn tồn tại.', show_alert=True); return
+        context.user_data.update(flow='rename_option_duration', rename_option_id=oid, rename_option_product_id=opt['product_id'])
+        if q.message:
+            await q.message.reply_text(f"Thời hạn hiện tại: {opt['duration_label']}\nNhập thời hạn mới (ví dụ: 1 ngày, 12 giờ, 7 ngày):")
+    elif data.startswith('adm:optionprice:'):
+        oid = int(data.split(':')[2])
         context.user_data.update(flow='edit_option_price', edit_option_id=oid)
         if q.message:
             await q.message.reply_text('Nhập giá thường mới bằng số VNĐ (ví dụ 50000):')
@@ -1217,7 +1239,7 @@ async def handle_deposit_review(q, context, data):
     deposit_id = int(raw_id)
     try:
         with db() as con:
-            dep = con.execute('SELECT * FROM deposits WHERE id=? FOR UPDATE', (deposit_id,)).fetchone()
+            dep = con.execute('SELECT d.*,u.username,u.full_name FROM deposits d JOIN users u ON u.user_id=d.user_id WHERE d.id=? FOR UPDATE OF d', (deposit_id,)).fetchone()
             if not dep:
                 await q.edit_message_text('Không tìm thấy đơn nạp tiền.'); return
             if dep['status'] not in ('pending', 'submitted'):
@@ -1227,13 +1249,14 @@ async def handle_deposit_review(q, context, data):
                 row = con.execute('SELECT balance FROM users WHERE user_id=?', (dep['user_id'],)).fetchone()
                 con.execute("INSERT INTO balance_transactions(user_id,admin_id,action,amount,balance_after,note,created_at) VALUES(?,?,'deposit',?,?,?,?)", (dep['user_id'], q.from_user.id, dep['amount'], row['balance'], f"Duyệt nạp #{deposit_id}", now()))
                 con.execute("UPDATE deposits SET status='approved' WHERE id=?", (deposit_id,))
-                result = f"✅ Đã duyệt đơn nạp #{deposit_id}. Đã cộng {dep['amount']:,}đ. Số dư mới: {row['balance']:,}đ."
+                username_text = '@' + dep['username'] if dep['username'] else 'Không có username'
+                result = (f"🎉 DUYỆT NẠP TIỀN THÀNH CÔNG!\n\n🧾 Đơn thứ tự: #{deposit_id}\n💰 Đã cộng: {dep['amount']:,}đ\n👤 Người dùng: {escape(dep['full_name'] or 'Không có tên')}\n📛 Username: {escape(username_text)}\n🆔 ID: <code>{dep['user_id']}</code>\n💳 Số dư hiện tại: {row['balance']:,}đ")
                 user_notice = f"✅ Yêu cầu nạp tiền #{deposit_id} đã được admin duyệt. Số tiền {dep['amount']:,}đ đã cộng vào tài khoản."
             else:
                 con.execute("UPDATE deposits SET status='rejected' WHERE id=?", (deposit_id,))
                 result = f"❌ Đã từ chối đơn nạp #{deposit_id}."
                 user_notice = f"❌ Yêu cầu nạp tiền #{deposit_id} đã bị từ chối. Nếu bạn đã chuyển tiền, vui lòng liên hệ admin."
-        await q.edit_message_text(result)
+        await q.edit_message_text(result, parse_mode='HTML' if action == 'approve' else None)
         try: await context.bot.send_message(chat_id=dep['user_id'], text=user_notice)
         except Exception: log.exception('Cannot notify user about deposit %s', deposit_id)
     except Exception:
@@ -1383,6 +1406,33 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             log.exception('Add custom product duration failed')
             context.user_data.clear(); await msg.reply_text('❌ Không thể thêm thời hạn. Kiểm tra Logs.', reply_markup=ADMIN_KB)
+        return
+    if flow == 'rename_option_duration' and is_admin(update):
+        label = text.strip()
+        oid = context.user_data.get('rename_option_id')
+        pid = context.user_data.get('rename_option_product_id')
+        if not oid or not pid or not label or len(label) > 40 or not re.search(r'\d', label):
+            await msg.reply_text('Thời hạn không hợp lệ. Nhập lại, ví dụ: 1 ngày hoặc 12 giờ:'); return
+        try:
+            with db() as con:
+                current = con.execute('SELECT id,duration FROM product_options WHERE id=? AND product_id=?', (oid,pid)).fetchone()
+                if not current:
+                    raise ValueError('Không tìm thấy gói thời hạn.')
+                duplicate = con.execute('SELECT 1 FROM product_options WHERE product_id=? AND id<>? AND LOWER(duration_label)=LOWER(?)', (pid,oid,label)).fetchone()
+                if duplicate:
+                    await msg.reply_text('Sản phẩm đã có thời hạn này. Nhập thời hạn khác:'); return
+                normalized = label.lower().replace(' ', '')
+                known = {'1gio':'1h','1giờ':'1h','12gio':'12h','12giờ':'12h','1ngay':'1d','1ngày':'1d','7ngay':'7d','7ngày':'7d','30ngay':'30d','30ngày':'30d'}
+                code = known.get(normalized, f"custom_{int(time.time()*1000)}")
+                conflict = con.execute('SELECT 1 FROM product_options WHERE product_id=? AND id<>? AND duration=?', (pid,oid,code)).fetchone()
+                if conflict:
+                    code = f"custom_{int(time.time()*1000)}"
+                con.execute('UPDATE product_options SET duration=?,duration_label=? WHERE id=?', (code,label,oid))
+            context.user_data.clear()
+            await msg.reply_text(f'✅ Đã đổi thời hạn thành {label}. Mini App sẽ hiển thị thời hạn mới.', reply_markup=ADMIN_KB)
+        except Exception as exc:
+            log.exception('Rename product duration failed')
+            await msg.reply_text(f'❌ Không thể đổi thời hạn: {str(exc)[:180]}')
         return
     if flow == 'edit_option_price' and is_admin(update):
         if not text.isdigit() or int(text) < 0:
@@ -1801,6 +1851,19 @@ async def api_admin_action(request: Request):
                 code=f"custom_{int(time.time()*1000)}"
                 con.execute('INSERT INTO product_options(product_id,duration,duration_label,price,sell_price) VALUES(?,?,?,0,0)',(pid,code,label))
                 return {'success':True,'message':f'Đã thêm thời hạn {label}. Đã đồng bộ lên Mini App với giá mặc định 0đ.'}
+            if action=='rename_duration':
+                oid=int(data.get('option_id')); label=str(data.get('duration_label','')).strip()
+                if not label or len(label)>40 or not re.search(r'\d',label): raise HTTPException(status_code=400,detail='Thời hạn không hợp lệ. Ví dụ: 1 ngày hoặc 12 giờ.')
+                row=con.execute('SELECT id,product_id FROM product_options WHERE id=?',(oid,)).fetchone()
+                if not row: raise HTTPException(status_code=404,detail='Không tìm thấy gói thời hạn.')
+                if con.execute('SELECT 1 FROM product_options WHERE product_id=? AND id<>? AND LOWER(duration_label)=LOWER(?)',(row['product_id'],oid,label)).fetchone():
+                    raise HTTPException(status_code=409,detail='Sản phẩm đã có thời hạn này.')
+                normalized=label.lower().replace(' ','')
+                known={'1gio':'1h','1giờ':'1h','12gio':'12h','12giờ':'12h','1ngay':'1d','1ngày':'1d','7ngay':'7d','7ngày':'7d','30ngay':'30d','30ngày':'30d'}
+                code=known.get(normalized,f"custom_{int(time.time()*1000)}")
+                if con.execute('SELECT 1 FROM product_options WHERE product_id=? AND id<>? AND duration=?',(row['product_id'],oid,code)).fetchone(): code=f"custom_{int(time.time()*1000)}"
+                con.execute('UPDATE product_options SET duration=?,duration_label=? WHERE id=?',(code,label,oid))
+                return {'success':True,'message':f'Đã đổi thời hạn thành {label}. Mini App đã được đồng bộ.'}
             if action=='delete_duration':
                 oid=int(data.get('option_id'))
                 row=con.execute('SELECT id,duration_label FROM product_options WHERE id=?',(oid,)).fetchone()
