@@ -1,5 +1,6 @@
 import os
 import re
+import io
 import asyncio
 import logging
 import json
@@ -26,7 +27,7 @@ from psycopg_pool import ConnectionPool
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / '.env')
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove, MessageEntity, WebAppInfo, MenuButtonWebApp
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove, MessageEntity, WebAppInfo, MenuButtonWebApp, InputFile
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ContextTypes, filters,
@@ -821,12 +822,17 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'adm:stats':
         with db() as con:
             user_count = con.execute('SELECT COUNT(*) AS n FROM users').fetchone()['n']
-            total_deposit = con.execute("SELECT SUM(amount) AS total FROM deposits WHERE status='approved'").fetchone()['total'] or 0
-            total_balance = con.execute("SELECT SUM(balance) AS total FROM users").fetchone()['total'] or 0
+            total_deposit = con.execute("SELECT COALESCE(SUM(amount),0) AS total FROM deposits WHERE status='approved'").fetchone()['total'] or 0
+            total_balance = con.execute("SELECT COALESCE(SUM(balance),0) AS total FROM users").fetchone()['total'] or 0
+            vn_now = datetime.now(ZoneInfo('Asia/Ho_Chi_Minh'))
+            today_start = vn_now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec='seconds')
+            tomorrow_start = (vn_now.replace(hour=0, minute=0, second=0, microsecond=0) + __import__('datetime').timedelta(days=1)).isoformat(timespec='seconds')
+            today_deposit = con.execute("SELECT COALESCE(SUM(amount),0) AS total FROM deposits WHERE status='approved' AND created_at>=? AND created_at<?", (today_start, tomorrow_start)).fetchone()['total'] or 0
         txt = (
             f"📊 THỐNG KÊ HỆ THỐNG\n\n"
             f"👥 Tổng số người dùng: {user_count:,}\n"
             f"💰 Tổng tiền đã nạp thành công: {total_deposit:,}đ\n"
+            f"📅 Tổng nạp hôm nay: {today_deposit:,}đ\n"
             f"💼 Tổng số dư ví hiện tại của user: {total_balance:,}đ"
         )
         await q.edit_message_text(txt, reply_markup=inline_back('adm:menu'), parse_mode='HTML')
@@ -1172,9 +1178,99 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cid = int(data.split(':')[2]); ps = get_products(cid); await q.edit_message_text('Chọn sản phẩm:', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(p['name'], callback_data=f"adm:stockprod:{p['id']}")] for p in ps] + [[InlineKeyboardButton('↩️ Quay lại', callback_data='adm:menu')]]))
     elif data.startswith('adm:stockprod:'):
         pid = int(data.split(':')[2])
-        with db() as con: rows = con.execute("SELECT po.*,COUNT(pk.id) FILTER (WHERE pk.status='available') AS available,COUNT(pk.id) AS total FROM product_options po LEFT JOIN product_keys pk ON pk.option_id=po.id WHERE po.product_id::text=?::text GROUP BY po.id ORDER BY po.duration", (pid,)).fetchall()
-        txt = '📦 KHO SẢN PHẨM\n' + '\n'.join(f"{r['duration_label']}: còn {r['available']} / tổng {r['total']} · Thường: {r['price']:,}đ | Sell: {r['sell_price']:,}đ" for r in rows) if rows else 'Sản phẩm chưa có gói thời hạn.'
-        await q.edit_message_text(txt, reply_markup=inline_back('adm:menu'))
+        with db() as con:
+            product = con.execute('SELECT name,category_id FROM products WHERE id=?', (pid,)).fetchone()
+            rows = con.execute("""SELECT po.id,po.duration_label,po.price,po.sell_price,
+                COUNT(pk.id) FILTER (WHERE pk.status='available') AS available,
+                COUNT(pk.id) AS total
+                FROM product_options po LEFT JOIN product_keys pk ON pk.option_id=po.id
+                WHERE po.product_id=? GROUP BY po.id ORDER BY po.id""", (pid,)).fetchall()
+        if not product:
+            await q.edit_message_text('Sản phẩm không còn tồn tại.', reply_markup=inline_back('adm:stock'))
+            return
+        txt = f"📦 KHO SẢN PHẨM: {product['name']}\nChọn thời hạn để xem và quản lý key:"
+        rows_kb = [[InlineKeyboardButton(
+            f"🔑 {r['duration_label']} · Còn {r['available']}/{r['total']}",
+            callback_data=f"adm:stockopt:{r['id']}"
+        )] for r in rows]
+        rows_kb.append([InlineKeyboardButton('↩️ Quay lại', callback_data=f"adm:stockcat:{product['category_id']}")])
+        await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(rows_kb))
+    elif data.startswith('adm:stockopt:'):
+        oid = int(data.split(':')[2])
+        with db() as con:
+            row = con.execute("""SELECT po.id,po.product_id,po.duration_label,po.price,po.sell_price,
+                p.name AS product_name,
+                COUNT(pk.id) FILTER (WHERE pk.status='available') AS available,
+                COUNT(pk.id) FILTER (WHERE pk.status='sold') AS sold,
+                COUNT(pk.id) AS total
+                FROM product_options po JOIN products p ON p.id=po.product_id
+                LEFT JOIN product_keys pk ON pk.option_id=po.id
+                WHERE po.id=? GROUP BY po.id,p.name""", (oid,)).fetchone()
+        if not row:
+            await q.edit_message_text('Gói thời hạn không còn tồn tại.', reply_markup=inline_back('adm:stock'))
+            return
+        txt = (f"📦 KHO KEY\n🎮 Sản phẩm: {row['product_name']}\n"
+               f"⏳ Thời hạn: {row['duration_label']}\n"
+               f"🟢 Còn trong kho: {row['available']}\n🔴 Đã bán: {row['sold']}\n"
+               f"📊 Tổng key: {row['total']}\n💰 Giá thường: {row['price']:,}đ | Sell: {row['sell_price']:,}đ")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton('🗑 Xóa tất cả key', callback_data=f'adm:stockdelete:{oid}')],
+            [InlineKeyboardButton('📄 Gửi tất cả key (.txt)', callback_data=f'adm:stockexport:{oid}')],
+            [InlineKeyboardButton('↩️ Quay lại thời hạn', callback_data=f"adm:stockprod:{row['product_id']}")],
+        ])
+        await q.edit_message_text(txt, reply_markup=kb)
+    elif data.startswith('adm:stockdelete:'):
+        oid = int(data.split(':')[2])
+        with db() as con:
+            row = con.execute('SELECT po.duration_label,p.name AS product_name FROM product_options po JOIN products p ON p.id=po.product_id WHERE po.id=?', (oid,)).fetchone()
+        if not row:
+            await q.edit_message_text('Gói thời hạn không còn tồn tại.', reply_markup=inline_back('adm:stock'))
+            return
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton('⚠️ XÁC NHẬN XÓA TẤT CẢ', callback_data=f'adm:stockdeleteconfirm:{oid}')],
+            [InlineKeyboardButton('Hủy', callback_data=f'adm:stockopt:{oid}')],
+        ])
+        await q.edit_message_text(
+            f"Bạn chắc chắn muốn xóa toàn bộ key của {row['product_name']} – {row['duration_label']}?\n"
+            'Thao tác này xóa cả key còn trong kho và key đã bán, không thể hoàn tác.',
+            reply_markup=kb
+        )
+    elif data.startswith('adm:stockdeleteconfirm:'):
+        oid = int(data.split(':')[2])
+        with db() as con:
+            row = con.execute('SELECT po.product_id,po.duration_label,p.name AS product_name FROM product_options po JOIN products p ON p.id=po.product_id WHERE po.id=?', (oid,)).fetchone()
+            if not row:
+                await q.edit_message_text('Gói thời hạn không còn tồn tại.', reply_markup=inline_back('adm:stock'))
+                return
+            result = con.execute('DELETE FROM product_keys WHERE option_id=?', (oid,))
+            deleted = result.rowcount
+        await q.edit_message_text(
+            f"✅ Đã xóa {deleted} key của {row['product_name']} – {row['duration_label']}.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('↩️ Quay lại thời hạn', callback_data=f"adm:stockprod:{row['product_id']}")],
+                [InlineKeyboardButton('🏠 Admin', callback_data='adm:menu')],
+            ])
+        )
+    elif data.startswith('adm:stockexport:'):
+        oid = int(data.split(':')[2])
+        with db() as con:
+            row = con.execute('SELECT po.duration_label,p.name AS product_name FROM product_options po JOIN products p ON p.id=po.product_id WHERE po.id=?', (oid,)).fetchone()
+            keys = con.execute("SELECT key_value FROM product_keys WHERE option_id=? AND status='available' ORDER BY id", (oid,)).fetchall()
+        if not row:
+            await q.edit_message_text('Gói thời hạn không còn tồn tại.', reply_markup=inline_back('adm:stock'))
+            return
+        if not keys:
+            await q.answer('Thời hạn này chưa có key.', show_alert=True)
+            return
+        safe_name = re.sub(r'[^A-Za-z0-9_-]+', '_', f"{row['product_name']}_{row['duration_label']}").strip('_')[:60] or 'keys'
+        content = ('\n'.join(k['key_value'] for k in keys) + '\n').encode('utf-8')
+        file_obj = io.BytesIO(content)
+        file_obj.name = f'{safe_name}.txt'
+        await context.bot.send_document(
+            chat_id=q.message.chat_id,
+            document=InputFile(file_obj, filename=file_obj.name),
+            caption=f"📄 Danh sách key còn trong kho: {row['product_name']} – {row['duration_label']}\nTổng key chưa bán: {len(keys)}."
+        )
     elif data.startswith('user:'):
         await admin_user_callback(q, context, data)
 
@@ -1249,22 +1345,15 @@ async def handle_deposit_review(q, context, data):
                 row = con.execute('SELECT balance FROM users WHERE user_id=?', (dep['user_id'],)).fetchone()
                 con.execute("INSERT INTO balance_transactions(user_id,admin_id,action,amount,balance_after,note,created_at) VALUES(?,?,'deposit',?,?,?,?)", (dep['user_id'], q.from_user.id, dep['amount'], row['balance'], f"Duyệt nạp #{deposit_id}", now()))
                 con.execute("UPDATE deposits SET status='approved' WHERE id=?", (deposit_id,))
-                username_text = '@' + dep['username'] if dep['username'] else 'Không có'
-                result = (f"🎉 NẠP TIỀN THÀNH CÔNG\n\nID: <code>{dep['user_id']}</code>\nUsername: {escape(username_text)}\nFull name: {escape(dep['full_name'] or 'Không có')}\n+{dep['amount']:,}\nSD: {row['balance']:,}đ\nND: <code>{escape(dep['note'] or '')}</code>")
+                username_text = '@' + dep['username'] if dep['username'] else 'Không có username'
+                result = (f"🎉 DUYỆT NẠP TIỀN THÀNH CÔNG!\n\n🧾 Đơn thứ tự: #{deposit_id}\n💰 Đã cộng: {dep['amount']:,}đ\n👤 Người dùng: {escape(dep['full_name'] or 'Không có tên')}\n📛 Username: {escape(username_text)}\n🆔 ID: <code>{dep['user_id']}</code>\n💳 Số dư hiện tại: {row['balance']:,}đ")
                 user_notice = f"✅ Yêu cầu nạp tiền #{deposit_id} đã được admin duyệt. Số tiền {dep['amount']:,}đ đã cộng vào tài khoản."
             else:
                 con.execute("UPDATE deposits SET status='rejected' WHERE id=?", (deposit_id,))
                 result = f"❌ Đã từ chối đơn nạp #{deposit_id}."
                 user_notice = f"❌ Yêu cầu nạp tiền #{deposit_id} đã bị từ chối. Nếu bạn đã chuyển tiền, vui lòng liên hệ admin."
-        success_markup = None
-        if action == 'approve' and MINI_APP_URL.startswith('https://'):
-            success_markup = InlineKeyboardMarkup([[InlineKeyboardButton('🛍 MỞ MINI APP MUA HÀNG', web_app=WebAppInfo(url=MINI_APP_URL))]])
-        await q.edit_message_text(result, parse_mode='HTML' if action == 'approve' else None, reply_markup=success_markup)
-        try:
-            if action == 'approve':
-                await context.bot.send_message(chat_id=dep['user_id'], text=result, parse_mode='HTML', reply_markup=success_markup)
-            else:
-                await context.bot.send_message(chat_id=dep['user_id'], text=user_notice)
+        await q.edit_message_text(result, parse_mode='HTML' if action == 'approve' else None)
+        try: await context.bot.send_message(chat_id=dep['user_id'], text=user_notice)
         except Exception: log.exception('Cannot notify user about deposit %s', deposit_id)
     except Exception:
         log.exception('Deposit review failed for %s', deposit_id)
@@ -1337,8 +1426,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         payment_note = ('Bot sẽ trừ số dư nội bộ; ShopHenry cấp key.' if o.get('shophenry_product_id') else 'Bot sẽ kiểm tra kho và số dư trước khi trừ tiền.')
         await msg.reply_text(f"🧾 XÁC NHẬN MUA HÀNG\n\n📁 Danh mục: {escape(o['category_name'])}\n📦 Sản phẩm: {escape(o['product_name'])}\n⏳ Thời hạn: {escape(o['duration_label'])}\n🔢 Số lượng: {p['quantity']}\n💰 Giá bán: {p['total']:,}đ\n\n{payment_note}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('✅ XÁC NHẬN MUA', callback_data='shop:confirm')], [InlineKeyboardButton('❌ HỦY', callback_data='shop:cancel')], [InlineKeyboardButton('↩️ Trở về', callback_data='menu:home')]])); return
     if flow == 'deposit_amount':
-        if not text.isdigit() or not 2_000 <= int(text) <= 10_000_000:
-            await msg.reply_text('Số tiền nạp phải từ 2.000đ đến 10.000.000đ. Vui lòng nhập lại:'); return
+        if not text.isdigit() or not 1 <= int(text) <= 1_000_000_000:
+            await msg.reply_text('Số tiền không hợp lệ. Nhập số nguyên từ 1 đến 1.000.000.000 VNĐ:'); return
         amount = int(text); uid = user.id
         try:
             with db() as con:
@@ -1723,17 +1812,18 @@ async def api_create_deposit(request: Request):
     user=_mini_user(request); payload=await request.json()
     try: amount=int(payload.get('amount'))
     except Exception: raise HTTPException(status_code=400,detail='Số tiền không hợp lệ.')
-    if amount<2000 or amount>10000000: raise HTTPException(status_code=400,detail='Số tiền nạp từ 2.000đ đến 10.000.000đ.')
+    if amount<2000 or amount>1000000000: raise HTTPException(status_code=400,detail='Số tiền nạp từ 2.000đ đến 1.000.000.000đ.')
     with db() as con:
-        # Khóa tài khoản khi tạo mã để tránh hai yêu cầu đồng thời.
+        # Serialize concurrent create requests for the same account.
         con.execute('SELECT user_id FROM users WHERE user_id=? FOR UPDATE',(user['id'],)).fetchone()
         con.execute("""UPDATE deposits SET status='expired'
             WHERE user_id=? AND status='pending'
               AND created_at::timestamptz < NOW() - INTERVAL '5 minutes'""",(user['id'],))
-        # Đơn đã gửi Admin không được dùng để chặn việc tạo QR mới; chỉ chặn QR pending còn hạn.
-        recent=con.execute("SELECT id FROM deposits WHERE user_id=? AND status='pending' ORDER BY id DESC LIMIT 1",(user['id'],)).fetchone()
+        recent=con.execute("SELECT id,status FROM deposits WHERE user_id=? AND status IN ('pending','submitted') ORDER BY id DESC LIMIT 1",(user['id'],)).fetchone()
         if recent:
-            raise HTTPException(status_code=409,detail='Bạn đang có mã nạp tiền còn hiệu lực. Hãy dùng mã hiện tại hoặc đợi mã hết hạn.')
+            message = ('Bot đang xét duyệt đơn nạp tiền của bạn. Vui lòng không gửi spam yêu cầu cho Admin.'
+                       if recent['status']=='submitted' else 'Bạn đang có mã nạp tiền còn hiệu lực. Hãy dùng mã hiện tại hoặc đợi mã hết hạn.')
+            raise HTTPException(status_code=409,detail=message)
         row=con.execute("INSERT INTO deposits(user_id,amount,status,note,created_at) VALUES(?,?,'pending','',?) RETURNING id",(user['id'],amount,now())).fetchone()
         did=int(row['id']); memo=f'{QR_MEMO_SUFFIX}{user["id"]}D{did}'
         con.execute('UPDATE deposits SET note=? WHERE id=?',(memo,did))
@@ -1747,11 +1837,8 @@ async def api_submit_deposit(deposit_id: int, request: Request):
         dep=con.execute('SELECT d.*,u.full_name,u.username FROM deposits d JOIN users u ON u.user_id=d.user_id WHERE d.id=? AND d.user_id=? FOR UPDATE',(deposit_id,user['id'])).fetchone()
         if not dep: raise HTTPException(status_code=404,detail='Không tìm thấy đơn nạp.')
         if dep['status']=='submitted':
-            return {'success':True,'already_submitted':True,'message':'Đơn nạp này đã được gửi Admin xét duyệt.'}
+            return {'success':True,'already_submitted':True,'message':'Bot đang xét duyệt đơn nạp tiền của bạn. Vui lòng không gửi spam yêu cầu cho Admin.'}
         if dep['status']!='pending': raise HTTPException(status_code=400,detail='Đơn nạp đã được xử lý hoặc hết hạn.')
-        other=con.execute("SELECT id FROM deposits WHERE user_id=? AND status='submitted' AND id<>? ORDER BY id DESC LIMIT 1",(user['id'],deposit_id)).fetchone()
-        if other:
-            raise HTTPException(status_code=409,detail=f'Đơn nạp #{other["id"]} đang chờ Admin xét duyệt. Vui lòng đợi đơn đó được xử lý trước khi gửi mã mới.')
         con.execute("UPDATE deposits SET status='submitted' WHERE id=?",(deposit_id,))
     body=(f'💳 YÊU CẦU XÁC NHẬN NẠP TIỀN\n\n🧾 Mã đơn: #{deposit_id}\n💰 Số tiền: {dep["amount"]:,}đ\n📝 Nội dung CK: {dep["note"]}\n👤 Tên: {dep["full_name"] or "Không có"}\n🆔 ID: {user["id"]}\n📛 Username: @{dep["username"] or "Không có"}\n\nKiểm tra giao dịch ngân hàng trước khi duyệt.')
     kb={'inline_keyboard':[[{'text':'✅ DUYỆT','callback_data':f'deposit:approve:{deposit_id}'},{'text':'❌ TỪ CHỐI','callback_data':f'deposit:reject:{deposit_id}'}]]}
