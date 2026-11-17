@@ -1897,35 +1897,40 @@ async def api_create_deposit(request: Request):
     except Exception: raise HTTPException(status_code=400,detail='Số tiền không hợp lệ.')
     if amount<2000 or amount>1000000000: raise HTTPException(status_code=400,detail='Số tiền nạp từ 2.000đ đến 1.000.000.000đ.')
     with db() as con:
-        # Serialize concurrent create requests for the same account.
+        # Lock this user's row so two rapid taps cannot create duplicate deposits.
         con.execute('SELECT user_id FROM users WHERE user_id=? FOR UPDATE',(user['id'],)).fetchone()
+        # Expire old unpaid QR requests. A new amount must never silently reuse
+        # a QR containing the previous amount or transfer memo.
         con.execute("""UPDATE deposits SET status='expired'
             WHERE user_id=? AND status='pending'
               AND created_at::timestamptz < NOW() - INTERVAL '5 minutes'""",(user['id'],))
         recent=con.execute("SELECT id,status,amount,note,created_at FROM deposits WHERE user_id=? AND status IN ('pending','submitted') ORDER BY id DESC LIMIT 1",(user['id'],)).fetchone()
-        if recent:
-            # Reuse the user's current deposit instead of returning an error or creating duplicates.
-            did=int(recent['id']); existing_amount=int(recent['amount']); memo=str(recent['note'] or '')
+        if recent and int(recent['amount']) == amount:
+            did=int(recent['id']); memo=str(recent['note'] or '')
             remaining=300
             try:
                 created=recent['created_at']
-                if isinstance(created,str):
-                    created_dt=datetime.fromisoformat(created.replace('Z','+00:00'))
-                else:
-                    created_dt=created
+                created_dt=datetime.fromisoformat(created.replace('Z','+00:00')) if isinstance(created,str) else created
                 if created_dt.tzinfo is None: created_dt=created_dt.replace(tzinfo=timezone.utc)
                 remaining=max(0,300-int((datetime.now(timezone.utc)-created_dt).total_seconds()))
             except Exception:
                 pass
-            return {'deposit_id':did,'amount':existing_amount,'transfer_content':memo,
-                    'qr_url':make_qr_url(existing_amount,memo),'expires_in':remaining,
-                    'status':recent['status'],
-                    'message':('Đơn nạp của bạn đang chờ Admin duyệt.' if recent['status']=='submitted'
-                               else 'Bạn đã có mã QR còn hiệu lực. Hãy sử dụng mã hiện tại.')}
+            return {'deposit_id':did,'amount':amount,'transfer_content':memo,
+                    'qr_url':make_qr_url(amount,memo) + '&v=' + str(did),
+                    'expires_in':remaining,'status':recent['status'],
+                    'message':('Đơn nạp này đang chờ Admin duyệt.' if recent['status']=='submitted'
+                               else 'Đang hiển thị lại mã QR của đơn này.')}
+        # If the user changed the amount, retire only the previous unpaid QR.
+        # Submitted requests remain in the review queue and are never auto-approved.
+        if recent and recent['status']=='pending':
+            con.execute("UPDATE deposits SET status='expired' WHERE id=? AND status='pending'",(recent['id'],))
         row=con.execute("INSERT INTO deposits(user_id,amount,status,note,created_at) VALUES(?,?,'pending','',?) RETURNING id",(user['id'],amount,now())).fetchone()
-        did=int(row['id']); memo=f'{QR_MEMO_SUFFIX}{user["id"]}D{did}'
+        did=int(row['id'])
+        memo=f'{QR_MEMO_PREFIX}{user["id"]}{QR_MEMO_SUFFIX}{did}'
         con.execute('UPDATE deposits SET note=? WHERE id=?',(memo,did))
-    return {'deposit_id':did,'amount':amount,'transfer_content':memo,'qr_url':make_qr_url(amount,memo),'expires_in':300,'status':'pending'}
+    return {'deposit_id':did,'amount':amount,'transfer_content':memo,
+            'qr_url':make_qr_url(amount,memo) + '&v=' + str(did),
+            'expires_in':300,'status':'pending'}
 
 
 @web_app.post('/api/deposits/{deposit_id}/submitted')
