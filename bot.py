@@ -40,8 +40,8 @@ SHOPHENRY_API_URL = os.getenv('SHOPHENRY_API_URL', 'https://shophenry.io.vn/api/
 ADMIN_IDS = {int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip().isdigit()}
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
 QR_BANK = os.getenv('QR_BANK', 'VietinBank').strip()
-QR_ACCOUNT = os.getenv('QR_ACCOUNT', '102886882160').strip()
-QR_HOLDER = os.getenv('QR_HOLDER', 'BACH CONG HIEU HUY').strip()
+QR_ACCOUNT = os.getenv('QR_ACCOUNT', '').strip()
+QR_HOLDER = os.getenv('QR_HOLDER', '').strip()
 QR_TEMPLATE = os.getenv('QR_TEMPLATE', 'compact').strip()
 QR_SHOWINFO = os.getenv('QR_SHOWINFO', 'false').strip().lower()
 QR_MEMO_PREFIX = 'SEVQR'
@@ -54,6 +54,16 @@ log = logging.getLogger('key_shop_bot')
 
 web_app = FastAPI(title='Jinny Cheat Mini App API')
 telegram_application = None
+
+
+@web_app.middleware('http')
+async def disable_api_caching(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'private, no-store, no-cache, max-age=0, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
 
 
 # Keep python-telegram-bot 21.6; api_kwargs passes newer Telegram Bot API fields.
@@ -143,6 +153,8 @@ def db():
 def now(): return datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).isoformat(timespec='seconds')
 def now_vn(): return datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).strftime('%d/%m/%Y %H:%M:%S')
 def make_qr_url(amount, memo):
+    if not QR_ACCOUNT:
+        raise RuntimeError('QR_ACCOUNT chưa được cấu hình.')
     params = {
         'bank': QR_BANK, 'acc': QR_ACCOUNT, 'amount': str(amount), 'des': memo,
         'template': QR_TEMPLATE, 'showinfo': QR_SHOWINFO, 'holder': QR_HOLDER,
@@ -470,6 +482,13 @@ def shophenry_buy(product_id, quantity):
     return '\n'.join(keys), order_code
 
 async def do_purchase(q, update, context):
+    if not q.message or q.message.chat.type != 'private':
+        context.user_data.pop('pending_purchase', None)
+        await q.edit_message_text(
+            '🔒 Để tránh lộ key, bot chỉ xử lý mua hàng trong chat riêng. '
+            'Hãy mở chat riêng với bot để tiếp tục.'
+        )
+        return
     pending = context.user_data.pop('pending_purchase', None)
     if not pending:
         await q.edit_message_text('Phiên mua hàng đã hết hoặc đã được xử lý. Hãy mở cửa hàng lại nếu muốn mua đơn mới.')
@@ -617,6 +636,12 @@ async def do_purchase(q, update, context):
     await q.edit_message_text(success_msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(buttons))
 
 async def user_history(q, uid):
+    if not q.message or q.message.chat.type != 'private':
+        await q.edit_message_text(
+            '🔒 Lịch sử có chứa key chỉ hiển thị trong chat riêng với bot. '
+            'Hãy mở bot trực tiếp để xem.'
+        )
+        return
     with db() as con: rows = con.execute('SELECT * FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 20', (uid,)).fetchall()
     if not rows:
         await q.edit_message_text('📜 Bạn chưa có lịch sử mua hàng.', reply_markup=inline_back('menu:home'))
@@ -1266,11 +1291,19 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         content = ('\n'.join(k['key_value'] for k in keys) + '\n').encode('utf-8')
         file_obj = io.BytesIO(content)
         file_obj.name = f'{safe_name}.txt'
-        await context.bot.send_document(
-            chat_id=q.message.chat_id,
-            document=InputFile(file_obj, filename=file_obj.name),
-            caption=f"📄 Danh sách key còn trong kho: {row['product_name']} – {row['duration_label']}\nTổng key chưa bán: {len(keys)}."
-        )
+        try:
+            await context.bot.send_document(
+                chat_id=user.id,
+                document=InputFile(file_obj, filename=file_obj.name),
+                caption=f"📄 Danh sách key còn trong kho: {row['product_name']} – {row['duration_label']}\nTổng key chưa bán: {len(keys)}."
+            )
+            if q.message and q.message.chat.type != 'private':
+                await q.message.reply_text('📬 File kho key đã được gửi riêng cho tài khoản admin.')
+        except Exception:
+            if q.message:
+                await q.message.reply_text(
+                    'Không gửi được file kho key. Hãy mở chat riêng với bot rồi thử xuất kho lại.'
+                )
     elif data.startswith('user:'):
         await admin_user_callback(q, context, data)
 
@@ -1428,6 +1461,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if flow == 'deposit_amount':
         if not text.isdigit() or not 1 <= int(text) <= 1_000_000_000:
             await msg.reply_text('Số tiền không hợp lệ. Nhập số nguyên từ 1 đến 1.000.000.000 VNĐ:'); return
+        if not QR_ACCOUNT:
+            await msg.reply_text('Shop chưa cấu hình tài khoản nhận tiền. Vui lòng liên hệ Admin.')
+            context.user_data['flow'] = None
+            return
         amount = int(text); uid = user.id
         try:
             with db() as con:
@@ -1614,11 +1651,30 @@ def _telegram_http(method, payload=None):
     url=f'https://api.telegram.org/bot{BOT_TOKEN}/{method}'
     body=json.dumps(payload or {}).encode('utf-8')
     req=urllib.request.Request(url,data=body,headers={'Content-Type':'application/json'},method='POST')
-    with urllib.request.urlopen(req,timeout=25) as response:
-        result=json.loads(response.read().decode('utf-8'))
-    if not result.get('ok'):
-        raise RuntimeError(str(result.get('description') or 'Telegram API error'))
-    return result.get('result')
+    retryable_statuses = {500, 502, 503, 504}
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=25) as response:
+                result=json.loads(response.read().decode('utf-8'))
+            if not result.get('ok'):
+                raise RuntimeError(str(result.get('description') or 'Telegram API error'))
+            return result.get('result')
+        except urllib.error.HTTPError as exc:
+            if exc.code not in retryable_statuses or attempt == 2:
+                raise
+            exc.close()
+            log.warning(
+                'Telegram API temporarily returned HTTP %s; retrying request (%s/3)',
+                exc.code, attempt + 1,
+            )
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            if attempt == 2:
+                raise
+            log.warning(
+                'Telegram API request failed temporarily (%s); retrying request (%s/3)',
+                type(exc).__name__, attempt + 1,
+            )
+        time.sleep(0.5 * (2 ** attempt))
 
 
 async def broadcast_new_stock_http(text):
@@ -1708,7 +1764,7 @@ def api_me(request: Request):
     with db() as con:
         u = con.execute('SELECT balance,is_locked,is_seller FROM users WHERE user_id=?', (user['id'],)).fetchone()
         deposits = con.execute("SELECT id,amount,status,note,created_at FROM deposits WHERE user_id=? AND status='approved' ORDER BY id DESC LIMIT 30", (user['id'],)).fetchall()
-        purchases = con.execute('SELECT id,product_name,duration_label,quantity,total_price,keys_text,created_at FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 30', (user['id'],)).fetchall()
+        purchases = con.execute('SELECT id,category_name,product_name,duration_label,quantity,total_price,keys_text,created_at FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 30', (user['id'],)).fetchall()
         total_deposit = con.execute("SELECT COALESCE(SUM(amount),0) AS n FROM deposits WHERE user_id=? AND status='approved'", (user['id'],)).fetchone()['n']
         total_spent = con.execute('SELECT COALESCE(SUM(total_price),0) AS n FROM purchases WHERE user_id=?', (user['id'],)).fetchone()['n']
         icon_row=con.execute("SELECT setting_value FROM bot_settings WHERE setting_key='miniapp_ff_icon'").fetchone()
@@ -1787,8 +1843,10 @@ async def api_purchase(request: Request):
         con.commit()
     except HTTPException:
         con.rollback(); raise
-    except Exception as e:
-        con.rollback(); log.exception('Mini App purchase failed'); raise HTTPException(status_code=500,detail=str(e)[:500])
+    except Exception:
+        con.rollback()
+        log.exception('Mini App purchase failed')
+        raise HTTPException(status_code=500,detail='Không thể xử lý đơn hàng lúc này. Vui lòng thử lại hoặc liên hệ Admin.')
     finally: con.close()
     guide_url = None
     try:
@@ -1800,7 +1858,11 @@ async def api_purchase(request: Request):
             f"🎮 Game: {opt['category_name']}\n📦 Sản phẩm: {opt['product_name']} - {opt['duration_label']}\n"
             f"🔢 Số lượng: {qty}\n💰 Tổng tiền: {total:,}đ\n\n🔑 KEY CỦA BẠN:\n<pre>{escape(key_text)}</pre>"
         )
-        _telegram_http('sendMessage', {'chat_id':user['id'],'text':telegram_text,'parse_mode':'HTML'})
+        await asyncio.to_thread(
+            _telegram_http,
+            'sendMessage',
+            {'chat_id':user['id'],'text':telegram_text,'parse_mode':'HTML'},
+        )
     except Exception: log.exception('Could not send purchased keys to Telegram user %s',user['id'])
     return {'success':True,'purchase_id':purchase_id,'total':total,'total_price':total,'keys_text':key_text,
             'category_name':opt['category_name'],'product_name':opt['product_name'],'duration_label':opt['duration_label'],
@@ -1810,6 +1872,8 @@ async def api_purchase(request: Request):
 @web_app.post('/api/deposits')
 async def api_create_deposit(request: Request):
     user=_mini_user(request); payload=await request.json()
+    if not QR_ACCOUNT:
+        raise HTTPException(status_code=503,detail='Shop chưa cấu hình tài khoản nhận tiền. Vui lòng liên hệ Admin.')
     try: amount=int(payload.get('amount'))
     except Exception: raise HTTPException(status_code=400,detail='Số tiền không hợp lệ.')
     if amount<2000 or amount>1000000000: raise HTTPException(status_code=400,detail='Số tiền nạp từ 2.000đ đến 1.000.000.000đ.')
@@ -2049,6 +2113,7 @@ def main():
     web_thread = threading.Thread(target=lambda: uvicorn.run(web_app, host='0.0.0.0', port=port, log_level='info'), daemon=True)
     web_thread.start()
     log.info('Shop bot + Mini App API started on port %s', port)
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Keep the bot polling when Telegram is temporarily unavailable during startup.
+    app.run_polling(allowed_updates=Update.ALL_TYPES, bootstrap_retries=-1)
 
 if __name__ == '__main__': main()

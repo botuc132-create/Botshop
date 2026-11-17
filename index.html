@@ -7,20 +7,20 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         :root {
-            --bg-color: #08101b;
-            --card-bg: #101a2a;
-            --box-bg: #15243a;
+            --bg-color: #06140f;
+            --card-bg: rgba(12, 27, 21, 0.86);
+            --box-bg: rgba(18, 38, 29, 0.78);
             --text-main: #ffffff;
-            --text-sub: #91a4bb;
-            --accent-blue: #00a2ff;
+            --text-sub: #94a69c;
+            --accent-blue: #00e5a8;
             --accent-yellow: #ffcc00;
-            --border-color: #243d5b;
+            --border-color: rgba(126, 170, 146, 0.22);
             --admin-red: #ff3344;
         }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background-color: var(--bg-color);
+            background: radial-gradient(ellipse at 50% 0%, rgba(0, 229, 168, 0.12), transparent 48%), var(--bg-color);
             color: var(--text-main);
             margin: 0;
             padding: 16px;
@@ -32,7 +32,7 @@
 
         #loading-screen {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: radial-gradient(ellipse at center, #071719 0%, #050a14 62%);
+            background: radial-gradient(ellipse at center, #0a2119 0%, #050c09 68%);
             display: flex; flex-direction: column; justify-content: center; align-items: center;
             z-index: 9999; transition: opacity 0.3s ease;
         }
@@ -45,16 +45,16 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .loading-title { font-size: 18px; font-weight: 800; color: #fff; letter-spacing: 2px; margin: 0; }
         .loading-subtitle { font-size: 11px; color: var(--text-sub); margin: 6px 0 25px 0; letter-spacing: 1px; }
-        .progress-bar-container { width: 240px; background-color: var(--box-bg); border-radius: 10px; height: 4px; overflow: hidden; border: 1px solid var(--border-color); margin-bottom: 12px; }
-        .progress-bar-fill { width: 0%; height: 100%; background: linear-gradient(90deg, #00b987, #00e5a8); box-shadow: 0 0 10px rgba(0,229,168,0.55); transition: width 0.18s ease; }
+        .progress-bar-container { width: 240px; background-color: rgba(0,229,168,0.18); border-radius: 10px; height: 2px; overflow: hidden; border: 0; margin-bottom: 12px; }
+        .progress-bar-fill { width: 0%; height: 100%; background: #00e5a8; box-shadow: 0 0 5px rgba(0,229,168,0.6); transition: width 0.18s ease; }
         .progress-info-row { width: 240px; display: flex; justify-content: space-between; font-size: 11px; color: var(--text-sub); font-weight: 700; }
 
         .tab-content { display: none; }
         .tab-content.active { display: block; }
 
-        .user-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+        .user-header { position: sticky; top: 0; z-index: 90; display: flex; align-items: center; justify-content: space-between; margin: -16px -16px 20px; padding: 10px 16px 11px; background: rgba(5, 20, 15, 0.78); border-bottom: 1px solid rgba(0,229,168,0.28); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
         .user-profile { display: flex; align-items: center; gap: 10px; }
-        .user-avatar { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; background-color: #1a2f4c; }
+        .user-avatar { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; background-color: #183329; }
         .user-info h3 { margin: 0; font-size: 14px; font-weight: 700; color: var(--text-main); max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .user-info p { margin: 2px 0 0 0; font-size: 11px; color: var(--text-sub); }
         .header-right { display: flex; align-items: flex-end; flex-direction: column; gap: 4px; }
@@ -68,7 +68,9 @@
 
         .banner-card { background: linear-gradient(120deg, #071c20 0%, var(--card-bg) 72%); border: 1px solid #173a3c; border-radius: 16px; padding: 14px 16px; display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
         .banner-icon { width: 58px; height: 58px; flex: 0 0 58px; display: grid; place-items: center; border-radius: 16px; background: linear-gradient(145deg, #082b43, #0b1e32); border: 1px solid #16496c; box-shadow: inset 0 0 18px rgba(0,162,255,0.09), 0 0 18px rgba(0,162,255,0.08); }
-        .banner-icon svg { width: 32px; height: 32px; fill: #00a2ff; filter: drop-shadow(0 0 7px rgba(0,162,255,0.55)); }
+        .banner-icon svg { width: 32px; height: 32px; fill: none; stroke: #00e5a8; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 7px rgba(0,229,168,0.45)); }
+        .banner-icon svg.key-icon, .nav-item svg.key-icon { fill: #00e5a8; stroke: none; }
+        .nav-item svg.key-icon { width: 26px; height: 26px; }
         .banner-text h2 { margin: 0; font-size: 16px; font-weight: 700; color: var(--text-main); }
         .banner-text p { margin: 2px 0 0 0; font-size: 11px; color: var(--text-sub); }
         .main-container { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 20px; padding: 17px 13px; }
@@ -159,10 +161,10 @@
         .admin-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 10px; }
         .admin-action-btn { background-color: #1a1518; border: 1px solid #3d2025; color: #ff6677; padding: 11px; border-radius: 10px; font-size: 12px; font-weight: 700; cursor: pointer; text-align: center; }
 
-        .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background-color: #03070f; border-top: 1px solid #102138; display: flex; justify-content: space-around; padding: 10px 0 16px 0; z-index: 100; }
-        .nav-item { background: none; border: none; display: flex; flex-direction: column; align-items: center; color: var(--text-sub); cursor: pointer; font-size: 10px; font-weight: 700; gap: 4px; width: 33.33%; }
-        .nav-item.active { color: var(--accent-blue); }
-        .nav-item svg { width: 22px; height: 22px; fill: currentColor; }
+        .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background-color: rgba(3, 12, 8, 0.78); border-top: 1px solid rgba(0,229,168,0.24); display: flex; justify-content: space-around; padding: 10px 0 16px 0; z-index: 100; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+        .nav-item { background: none; border: none; display: flex; flex-direction: column; align-items: center; color: #00e5a8; cursor: pointer; font-size: 10px; font-weight: 800; gap: 4px; width: 33.33%; }
+        .nav-item.active { color: #00e5a8; }
+        .nav-item svg { width: 22px; height: 22px; fill: none; stroke: #00e5a8; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
         body :where(.user-info h3, .banner-text h2, .section-header, .app-name,
         .select-cat-text h4, .pkg-info h5, .checkout-label, .qty-val,
         .balance-vnd, .history-info .amount, .stat-box .stat-val,
@@ -181,6 +183,36 @@
         .purchase-success-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:14px; }
         .purchase-success-actions button { min-height:44px; padding:10px; border:0; border-radius:10px; background:#0d325c; color:#fff; font-size:12px; font-weight:800; cursor:pointer; }
         .purchase-success-actions .success-buy-again { grid-column:1 / -1; background:var(--accent-blue); color:#07111f; }
+        .banner-card, .main-container, .deposit-card, .history-card, .overview-card,
+        .ref-card, .kho-card, .admin-card, .purchase-success-card {
+            background-color: rgba(12, 27, 21, 0.76);
+            border-color: rgba(126, 170, 146, 0.2);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        .banner-card { background: linear-gradient(120deg, rgba(0,229,168,0.09), rgba(12,27,21,0.72) 72%); }
+        .banner-icon { background: linear-gradient(145deg, rgba(0,229,168,0.14), rgba(8,25,18,0.72)); border-color: rgba(0,229,168,0.28); box-shadow: inset 0 0 18px rgba(0,229,168,0.08), 0 0 18px rgba(0,229,168,0.06); }
+        .app-item, .select-category-box, .package-card, .checkout-box,
+        .history-item, .kho-item, .stat-box, .amount-input-box, .ref-link-box,
+        .key-row, .purchase-success-details {
+            background-color: rgba(18, 38, 29, 0.68);
+            border-color: rgba(180, 211, 194, 0.12);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+        .package-card.selected, .app-item.selected { border-color: rgba(0,229,168,0.72); box-shadow: 0 0 12px rgba(0,229,168,0.14); }
+        .key-copy-text, .success-key-button { background: rgba(4,16,11,0.58); border-color: rgba(0,229,168,0.2); }
+        .ref-btn, .apply-voucher-btn { background: rgba(0,229,168,0.12); border-color: rgba(0,229,168,0.3); }
+        @media (prefers-reduced-transparency: reduce) {
+            .user-header, .bottom-nav, .banner-card, .main-container, .deposit-card,
+            .history-card, .overview-card, .ref-card, .kho-card, .admin-card,
+            .purchase-success-card, .app-item, .select-category-box, .package-card,
+            .checkout-box, .history-item, .kho-item, .stat-box, .amount-input-box,
+            .ref-link-box, .key-row, .purchase-success-details {
+                backdrop-filter: none;
+                -webkit-backdrop-filter: none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -218,9 +250,9 @@
     <div id="tab-buy" class="tab-content active">
         <div class="banner-card">
             <div class="banner-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24">
-                    <path fill-rule="evenodd" d="M7 6a6 6 0 1 0 0 12 6 6 0 1 0 0-12Zm0 4a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z"/>
-                    <path d="M12 10.5H23v3h-2v3h-3v-3h-2v3h-3v-3h-1z"/>
+                <svg class="key-icon" viewBox="0 0 32 32" aria-hidden="true">
+                    <path fill-rule="evenodd" d="M23 0a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/>
+                    <path d="M17.1 14.9 4.5 27.5V31H12v-4.5h4.5V22l4.4-4.4z"/>
                 </svg>
             </div>
             <div class="banner-text">
@@ -428,15 +460,24 @@
 
     <div class="bottom-nav">
         <button class="nav-item active" id="nav-buy" onclick="switchTab('buy')">
-            <svg viewBox="0 0 24 24"><path d="M12.559 2.532a5.5 5.5 0 0 0-7.39 7.39l-4.78 4.78a1 1 0 0 0-.29.71V18a2 2 0 0 0 2 2h2a1 1 0 0 0 1-1v-1h2a1 1 0 0 0 1-1v-1h1.18a5.5 5.5 0 0 0 6.21-12.468zm-5.059 8.468a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm2.5-4a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/></svg>
+            <svg class="key-icon" viewBox="0 0 32 32" aria-hidden="true">
+                <path fill-rule="evenodd" d="M23 0a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/>
+                <path d="M17.1 14.9 4.5 27.5V31H12v-4.5h4.5V22l4.4-4.4z"/>
+            </svg>
             MUA KEY
         </button>
         <button class="nav-item" id="nav-deposit" onclick="switchTab('deposit')">
-            <svg viewBox="0 0 24 24"><path d="M21 18v1c0 1.1-.9 2-2 2H5c-1.11 0-2-.9-2-2V5c0-1.1.89-2 2-2h14c1.1 0 2 .9 2 2v1h-9c-1.11 0-2 .9-2 2v8c0 1.1.89 2 2 2h9zm-9-2h10V8H12v8zm4-2.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="5.5" width="18" height="13" rx="2.5"/>
+                <path d="M3 9.5h18m-5.5 5h2"/>
+            </svg>
             NẠP TIỀN
         </button>
         <button class="nav-item" id="nav-profile" onclick="switchTab('profile')">
-            <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="8" r="3.5"/>
+                <path d="M4.5 20c.6-3.4 3.5-5.5 7.5-5.5s6.9 2.1 7.5 5.5"/>
+            </svg>
             CÁ NHÂN
         </button>
     </div>
