@@ -1750,7 +1750,15 @@ async def miniapp_index():
         html_path = BASE_DIR / 'index(3).html'
     if not html_path.exists():
         raise HTTPException(status_code=404, detail='Không tìm thấy index.html hoặc index(3).html')
-    return FileResponse(html_path, media_type='text/html; charset=utf-8')
+    return FileResponse(
+        html_path,
+        media_type='text/html; charset=utf-8',
+        headers={
+            'Cache-Control': 'private, no-store, no-cache, max-age=0, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+        },
+    )
 
 
 @web_app.get('/health')
