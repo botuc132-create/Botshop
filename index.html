@@ -623,44 +623,93 @@
         let adminSelectedCatForAddKey = '';
         let countdownInterval = null;
 
-        const loadingStartedAt = performance.now();
+        let loadingCyclePromise = null;
+        let loadingInterval = null;
         let currentProgress = 12;
-        let initialLoadingFinished = false;
         function setLoadingProgress(value, status) {
             currentProgress = Math.max(currentProgress, Math.min(100, value));
             document.getElementById('progress-fill').style.width = currentProgress + '%';
             document.getElementById('progress-percent').innerText = Math.round(currentProgress) + '%';
             if (status) document.getElementById('progress-status-text').innerText = status;
         }
-        let loadingInterval = setInterval(() => {
-            if (currentProgress < 84) setLoadingProgress(currentProgress + 2, 'ĐANG TẢI DỮ LIỆU...');
-        }, 130);
+        function showLoadingScreen() {
+            const screen = document.getElementById('loading-screen');
+            screen.style.display = 'flex';
+            screen.style.opacity = '1';
+            currentProgress = 12;
+            setLoadingProgress(12, 'ĐANG TẢI DỮ LIỆU...');
+            if (loadingInterval) clearInterval(loadingInterval);
+            loadingInterval = setInterval(() => {
+                if (currentProgress < 84) setLoadingProgress(currentProgress + 2, 'ĐANG TẢI DỮ LIỆU...');
+            }, 130);
+        }
+        async function waitForOneImage(url, timeoutMs = 15000) {
+            if (!url) return false;
+            return await new Promise(resolve => {
+                const img = new Image();
+                let settled = false;
+                const done = ok => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    resolve(ok);
+                };
+                const timer = setTimeout(() => done(false), timeoutMs);
+                img.onload = async () => {
+                    try { if (img.decode) await img.decode(); } catch (_) {}
+                    done(true);
+                };
+                img.onerror = () => done(false);
+                img.src = url;
+                if (img.complete && img.naturalWidth > 0) done(true);
+            });
+        }
         async function waitForCatalogImages() {
             const urls = [...new Set((categoriesData || []).map(c => String(c.icon || '').trim()).filter(Boolean))];
-            await Promise.all(urls.map(url => new Promise(resolve => {
-                const img = new Image();
-                img.onload = img.onerror = () => resolve();
-                img.src = url;
-                if (img.complete) resolve();
-            })));
+            const preloadResults = await Promise.all(urls.map(url => waitForOneImage(url)));
+            // Wait for images actually rendered in the category/product interface too.
+            const rendered = [...document.querySelectorAll('img[src]')]
+                .filter(img => img.getAttribute('src'));
+            await Promise.all(rendered.map(img => {
+                if (img.complete && img.naturalWidth > 0) return Promise.resolve(true);
+                return new Promise(resolve => {
+                    let done = false;
+                    const finish = ok => { if (done) return; done = true; clearTimeout(timer); resolve(ok); };
+                    const timer = setTimeout(() => finish(false), 15000);
+                    img.addEventListener('load', () => finish(true), {once:true});
+                    img.addEventListener('error', () => finish(false), {once:true});
+                });
+            }));
+            return preloadResults.every(Boolean);
         }
-
         async function finishInitialLoading() {
-            if (initialLoadingFinished) return;
-            await waitForCatalogImages();
-            initialLoadingFinished = true;
-            clearInterval(loadingInterval);
-            const minimumVisibleMs = 500;
-            const remaining = Math.max(0, minimumVisibleMs - (performance.now() - loadingStartedAt));
-            setTimeout(() => {
+            if (loadingCyclePromise) return loadingCyclePromise;
+            loadingCyclePromise = (async () => {
+                await waitForCatalogImages();
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                if (loadingInterval) clearInterval(loadingInterval);
                 setLoadingProgress(100, 'HOÀN THÀNH!');
-                setTimeout(() => {
-                    const screen = document.getElementById('loading-screen');
-                    screen.style.opacity = '0';
-                    setTimeout(() => { screen.style.display = 'none'; }, 300);
-                }, 120);
-            }, remaining);
+                await new Promise(resolve => setTimeout(resolve, 180));
+                const screen = document.getElementById('loading-screen');
+                screen.style.opacity = '0';
+                await new Promise(resolve => setTimeout(resolve, 320));
+                screen.style.display = 'none';
+            })().finally(() => { loadingCyclePromise = null; });
+            return loadingCyclePromise;
         }
+        async function reloadMiniAppOnReturn() {
+            if (document.visibilityState !== 'visible' || loadingCyclePromise) return;
+            showLoadingScreen();
+            try { await loadCatalog({force:true}); }
+            catch (error) { console.warn('Refresh catalog on return failed:', error); }
+            await finishInitialLoading();
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') reloadMiniAppOnReturn();
+        });
+        window.addEventListener('pageshow', event => {
+            if (event.persisted) reloadMiniAppOnReturn();
+        });
 
         let user = tg.initDataUnsafe?.user;
         if (user) {
@@ -1246,9 +1295,27 @@
                     body: JSON.stringify({amount})
                 });
                 activeDeposit = data;
-                document.getElementById('viet-qr-img').src = data.qr_url;
+                const qrImage = document.getElementById('viet-qr-img');
+                qrImage.onload = () => { qrImage.dataset.loaded = '1'; };
+                qrImage.onerror = () => tg.showAlert('Không tải được ảnh QR. Vui lòng kiểm tra kết nối và thử lại.');
+                qrImage.dataset.loaded = '0';
+                qrImage.src = data.qr_url;
                 document.getElementById('qr-display-amount').innerText = Number(data.amount).toLocaleString('vi-VN') + 'đ';
                 document.getElementById('qr-result-container').style.display = 'block';
+                const paidButton = document.querySelector('#qr-result-container button');
+                const statusLabel = document.querySelector('#qr-result-container > div:first-child');
+                if (data.status === 'submitted') {
+                    statusLabel.textContent = 'ĐƠN ĐANG CHỜ ADMIN DUYỆT';
+                    paidButton.disabled = true;
+                    paidButton.textContent = 'BOT ĐANG XÉT DUYỆT';
+                    document.getElementById('countdown-timer').textContent = 'Đang chờ Admin';
+                    if (countdownInterval) clearInterval(countdownInterval);
+                } else {
+                    statusLabel.textContent = 'ĐANG THANH TOÁN';
+                    paidButton.disabled = false;
+                    paidButton.textContent = 'ĐÃ CHUYỂN TIỀN';
+                    startCountdown(Math.max(0, Math.floor(data.expires_in || 300)));
+                }
 
                 let memoNode = document.getElementById('deposit-transfer-content');
                 if (!memoNode) {
@@ -1258,7 +1325,6 @@
                     document.querySelector('#qr-result-container').insertBefore(memoNode, document.querySelector('#qr-result-container button'));
                 }
                 memoNode.textContent = 'NỘI DUNG CK: ' + data.transfer_content;
-                startCountdown(Math.max(0, Math.floor(data.expires_in || 300)));
                 document.getElementById('qr-result-container').scrollIntoView({behavior:'smooth'});
                 tg.HapticFeedback?.notificationOccurred('success');
             } catch (error) {

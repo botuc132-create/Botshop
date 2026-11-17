@@ -652,12 +652,12 @@ async def user_history(q, uid):
     out = ['📜 LỊCH SỬ MUA HÀNG']
     for r in rows:
         out.append(
-            f"\\n🧾 <b>Đơn #{r['id']}</b> · {escape(str(r['created_at']))}\\n"
-            f"📦 {escape(r['product_name'])} · {escape(r['duration_label'])}\\n"
-            f"🔢 Số lượng: {r['quantity']} · 💰 {r['total_price']:,}đ\\n"
-            f"🔑 KEY:\\n<pre>{escape(r['keys_text'] or 'Không có key')}</pre>"
+            f"\n🧾 <b>Đơn #{r['id']}</b> · {escape(str(r['created_at']))}\n"
+            f"📦 {escape(r['product_name'])} · {escape(r['duration_label'])}\n"
+            f"🔢 Số lượng: {r['quantity']} · 💰 {r['total_price']:,}đ\n"
+            f"🔑 KEY:\n<pre>{escape(r['keys_text'] or 'Không có key')}</pre>"
         )
-    await q.edit_message_text('\\n'.join(out), parse_mode='HTML', reply_markup=inline_back('menu:home'))
+    await q.edit_message_text('\n'.join(out), parse_mode='HTML', reply_markup=inline_back('menu:home'))
 
 async def broadcast(bot, text, photo=None, status_message=None, reply_markup=None):
     with db() as con: 
@@ -1383,7 +1383,15 @@ async def handle_deposit_review(q, context, data):
                 con.execute("UPDATE deposits SET status='approved' WHERE id=?", (deposit_id,))
                 username_text = '@' + dep['username'] if dep['username'] else 'Không có username'
                 result = (f"🎉 DUYỆT NẠP TIỀN THÀNH CÔNG!\n\n🧾 Đơn thứ tự: #{deposit_id}\n💰 Đã cộng: {dep['amount']:,}đ\n👤 Người dùng: {escape(dep['full_name'] or 'Không có tên')}\n📛 Username: {escape(username_text)}\n🆔 ID: <code>{dep['user_id']}</code>\n💳 Số dư hiện tại: {row['balance']:,}đ")
-                user_notice = f"✅ Yêu cầu nạp tiền #{deposit_id} đã được admin duyệt. Số tiền {dep['amount']:,}đ đã cộng vào tài khoản."
+                username_notice = '@' + dep['username'] if dep['username'] else 'Không có'
+                user_notice = (
+                    'NẠP TIỀN THÀNH CÔNG\n'
+                    f"ID: {dep['user_id']}\n"
+                    f"Username: {username_notice}\n"
+                    f"Full name: {dep['full_name'] or 'Không có'}\n"
+                    f"+{dep['amount']:,}đ\n"
+                    f"ND: {dep['note'] or ''}"
+                )
             else:
                 con.execute("UPDATE deposits SET status='rejected' WHERE id=?", (deposit_id,))
                 result = f"❌ Đã từ chối đơn nạp #{deposit_id}."
@@ -1894,15 +1902,30 @@ async def api_create_deposit(request: Request):
         con.execute("""UPDATE deposits SET status='expired'
             WHERE user_id=? AND status='pending'
               AND created_at::timestamptz < NOW() - INTERVAL '5 minutes'""",(user['id'],))
-        recent=con.execute("SELECT id,status FROM deposits WHERE user_id=? AND status IN ('pending','submitted') ORDER BY id DESC LIMIT 1",(user['id'],)).fetchone()
+        recent=con.execute("SELECT id,status,amount,note,created_at FROM deposits WHERE user_id=? AND status IN ('pending','submitted') ORDER BY id DESC LIMIT 1",(user['id'],)).fetchone()
         if recent:
-            message = ('Bot đang xét duyệt đơn nạp tiền của bạn. Vui lòng không gửi spam yêu cầu cho Admin.'
-                       if recent['status']=='submitted' else 'Bạn đang có mã nạp tiền còn hiệu lực. Hãy dùng mã hiện tại hoặc đợi mã hết hạn.')
-            raise HTTPException(status_code=409,detail=message)
+            # Reuse the user's current deposit instead of returning an error or creating duplicates.
+            did=int(recent['id']); existing_amount=int(recent['amount']); memo=str(recent['note'] or '')
+            remaining=300
+            try:
+                created=recent['created_at']
+                if isinstance(created,str):
+                    created_dt=datetime.fromisoformat(created.replace('Z','+00:00'))
+                else:
+                    created_dt=created
+                if created_dt.tzinfo is None: created_dt=created_dt.replace(tzinfo=timezone.utc)
+                remaining=max(0,300-int((datetime.now(timezone.utc)-created_dt).total_seconds()))
+            except Exception:
+                pass
+            return {'deposit_id':did,'amount':existing_amount,'transfer_content':memo,
+                    'qr_url':make_qr_url(existing_amount,memo),'expires_in':remaining,
+                    'status':recent['status'],
+                    'message':('Đơn nạp của bạn đang chờ Admin duyệt.' if recent['status']=='submitted'
+                               else 'Bạn đã có mã QR còn hiệu lực. Hãy sử dụng mã hiện tại.')}
         row=con.execute("INSERT INTO deposits(user_id,amount,status,note,created_at) VALUES(?,?,'pending','',?) RETURNING id",(user['id'],amount,now())).fetchone()
         did=int(row['id']); memo=f'{QR_MEMO_SUFFIX}{user["id"]}D{did}'
         con.execute('UPDATE deposits SET note=? WHERE id=?',(memo,did))
-    return {'deposit_id':did,'amount':amount,'transfer_content':memo,'qr_url':make_qr_url(amount,memo),'expires_in':300}
+    return {'deposit_id':did,'amount':amount,'transfer_content':memo,'qr_url':make_qr_url(amount,memo),'expires_in':300,'status':'pending'}
 
 
 @web_app.post('/api/deposits/{deposit_id}/submitted')
