@@ -39,9 +39,12 @@ SHOPHENRY_API_TOKEN = os.getenv('SHOPHENRY_API_TOKEN', '').strip()
 SHOPHENRY_API_URL = os.getenv('SHOPHENRY_API_URL', 'https://shophenry.io.vn/api/seller.php').strip()
 ADMIN_IDS = {int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip().isdigit()}
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
-QR_BANK = os.getenv('QR_BANK', 'VietinBank').strip()
-QR_ACCOUNT = os.getenv('QR_ACCOUNT', '').strip()
-QR_HOLDER = os.getenv('QR_HOLDER', '').strip()
+# Fallback VietQR settings mirror env.example so deposits work even when
+# optional QR variables have not been added to Railway Variables.
+# Railway environment values always take precedence over these defaults.
+QR_BANK = os.getenv('QR_BANK', 'VietinBank').strip() or 'VietinBank'
+QR_ACCOUNT = os.getenv('QR_ACCOUNT', '102886882160').strip() or '102886882160'
+QR_HOLDER = os.getenv('QR_HOLDER', 'BACH CONG HIEU HUY').strip() or 'BACH CONG HIEU HUY'
 QR_TEMPLATE = os.getenv('QR_TEMPLATE', 'compact').strip()
 QR_SHOWINFO = os.getenv('QR_SHOWINFO', 'false').strip().lower()
 QR_MEMO_PREFIX = 'SEVQR'

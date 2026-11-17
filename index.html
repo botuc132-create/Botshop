@@ -18,6 +18,11 @@
             --admin-red: #ff3344;
         }
 
+        /* Loại bỏ chớp sáng trắng khi chạm nút/ô trên trình duyệt di động */
+        *, *::before, *::after { -webkit-tap-highlight-color: transparent; }
+        button, a, input, select, textarea, [onclick] { outline-color: transparent; }
+        button:focus, button:focus-visible, [onclick]:focus, [onclick]:focus-visible { outline: none; }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             background: radial-gradient(ellipse at 50% 0%, rgba(0, 229, 168, 0.12), transparent 48%), var(--bg-color);
@@ -94,12 +99,12 @@
         .select-cat-text p { margin: 2px 0 0 0; font-size: 11px; color: var(--text-sub); }
 
         .info-notice-box { background-color: #0b1a2e; border: 1px solid #14335c; border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; font-size: 11px; color: var(--text-sub); line-height: 1.4; }
-        .package-card { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 15px 17px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; cursor: pointer; transition: border-color 0.15s ease; }
+        .package-card { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 19px 17px; min-height: 88px; box-sizing: border-box; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; cursor: pointer; transition: border-color 0.15s ease; }
         .package-card.selected { border-color: var(--accent-blue); background-color: #122845; }
         .pkg-info h5 { margin: 0; font-size: 15px; font-weight: 800; color: var(--text-main); }
         .pkg-info p { margin: 4px 0 0 0; font-size: 11px; color: var(--text-sub); }
         .pkg-price-box { background-color: #060f1c; border: 1px solid #142a4a; border-radius: 10px; padding: 8px 14px; text-align: right; }
-        .pkg-new-price { font-size: 14px; color: var(--accent-blue); font-weight: 800; margin: 0; }
+        .pkg-new-price { font-size: 14px; color: #ffffff !important; font-weight: 800; margin: 0; }
 
         .checkout-box { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 16px; padding: 16px; margin-top: 16px; display: none; }
         .checkout-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
@@ -277,9 +282,10 @@
             <div id="select-category-container" style="display: none;">
                 <div class="select-category-box" onclick="openCategoryModal('buy')">
                     <div class="select-cat-left">
-                        <svg class="select-cat-icon" viewBox="0 0 24 24" fill="#00a2ff" style="background: #101c30; padding: 6px; border-radius: 10px;">
+                        <svg id="selected-cat-default-icon" class="select-cat-icon" viewBox="0 0 24 24" fill="#00e5a8" style="background: #101c30; padding: 6px; border-radius: 10px; box-sizing:border-box;">
                             <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
                         </svg>
+                        <img id="selected-category-image" class="select-cat-icon" alt="Ảnh danh mục" style="display:none;">
                         <div class="select-cat-text">
                             <h4>Chọn Mục</h4>
                             <p id="selected-cat-name">Chưa chọn</p>
@@ -629,8 +635,19 @@
         let loadingInterval = setInterval(() => {
             if (currentProgress < 84) setLoadingProgress(currentProgress + 2, 'ĐANG TẢI DỮ LIỆU...');
         }, 130);
-        function finishInitialLoading() {
+        async function waitForCatalogImages() {
+            const urls = [...new Set((categoriesData || []).map(c => String(c.icon || '').trim()).filter(Boolean))];
+            await Promise.all(urls.map(url => new Promise(resolve => {
+                const img = new Image();
+                img.onload = img.onerror = () => resolve();
+                img.src = url;
+                if (img.complete) resolve();
+            })));
+        }
+
+        async function finishInitialLoading() {
             if (initialLoadingFinished) return;
+            await waitForCatalogImages();
             initialLoadingFinished = true;
             clearInterval(loadingInterval);
             const minimumVisibleMs = 500;
@@ -694,6 +711,9 @@
             document.querySelectorAll('.app-item').forEach(el => el.classList.remove('selected'));
             element.classList.add('selected');
             document.getElementById('select-category-container').style.display = 'block';
+            document.getElementById('selected-category-image').style.display = 'none';
+            document.getElementById('selected-cat-default-icon').style.display = 'block';
+            document.getElementById('selected-cat-name').innerText = 'Chưa chọn';
             await loadCatalog();
             renderCategoriesList();
             if (!categoriesData.length) tg.showAlert('Shop chưa có danh mục/sản phẩm được cấu hình trong bot.');
@@ -948,6 +968,17 @@
             tg.HapticFeedback?.notificationOccurred('success');
             document.getElementById('selected-cat-name').innerText = catName;
             selectedCategory = categoriesData.find(c => c.name === catName) || null;
+            const categoryImage = document.getElementById('selected-category-image');
+            const defaultCategoryIcon = document.getElementById('selected-cat-default-icon');
+            if (selectedCategory && selectedCategory.icon) {
+                categoryImage.src = selectedCategory.icon;
+                categoryImage.style.display = 'block';
+                defaultCategoryIcon.style.display = 'none';
+            } else {
+                categoryImage.removeAttribute('src');
+                categoryImage.style.display = 'none';
+                defaultCategoryIcon.style.display = 'block';
+            }
             selectedOptionId = null;
             selectedPkgName = '';
             const list = document.getElementById('packages-list');
