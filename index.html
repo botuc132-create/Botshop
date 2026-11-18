@@ -297,7 +297,7 @@
 
                 <div class="section-header">Chọn gói sản phẩm</div>
                 
-                <div id="packages-list"><p class="deposit-desc">Đang tải sản phẩm từ ShopHenry API...</p></div>
+                <div id="packages-list"><p class="deposit-desc">Đang tải sản phẩm chuẩn giá người thường từ ShopHenry API...</p></div>
 
                 <div class="checkout-box" id="checkout-box">
                     <div class="checkout-row">
@@ -697,15 +697,22 @@
                         products: item.products.map((p, pIdx) => ({
                             id: p.id || (index * 100 + pIdx + 1),
                             name: p.name || p.title || 'Sản phẩm',
-                            options: (p.options || [p]).map(opt => ({
-                                id: 'sh_' + String(opt.id || opt.product_id || index),
-                                shophenry_id: String(opt.id || opt.product_id || index),
-                                duration: opt.duration || opt.duration_label || opt.name || '1 Ngày',
-                                duration_label: opt.duration_label || opt.duration || opt.name || '1 Ngày',
-                                price: Number(opt.price || opt.sell_price || 0),
-                                stock: Number(opt.stock ?? opt.quantity ?? opt.available ?? 10),
-                                shophenry: true
-                            }))
+                            options: (p.options || [p]).map(opt => {
+                                // LUÔN ƯU TIÊN LẤY GIÁ NGƯỜI DÙNG THƯỜNG (Giá gốc chưa giảm / không lấy sell_price nếu nhỏ hơn)
+                                const normalPrice = Number(opt.price || opt.retail_price || opt.original_price || opt.sell_price || 0);
+                                const altSellPrice = Number(opt.sell_price || opt.member_price || 0);
+                                const standardPrice = (altSellPrice > 0 && altSellPrice > normalPrice) ? altSellPrice : (normalPrice || altSellPrice);
+
+                                return {
+                                    id: 'sh_' + String(opt.id || opt.product_id || index),
+                                    shophenry_id: String(opt.id || opt.product_id || index),
+                                    duration: opt.duration || opt.duration_label || opt.name || '1 Ngày',
+                                    duration_label: opt.duration_label || opt.duration || opt.name || '1 Ngày',
+                                    price: standardPrice,
+                                    stock: Number(opt.stock ?? opt.quantity ?? opt.available ?? 10),
+                                    shophenry: true
+                                };
+                            })
                         }))
                     });
                     return;
@@ -717,6 +724,10 @@
                 const prodName = parts.length > 1 ? parts[0] : fullName;
                 const durLabel = item.duration_label || item.duration || (parts.length > 1 ? parts.slice(1).join(' - ') : '1 Ngày');
                 const shId = String(item.id || item.product_id || index);
+
+                const normalPrice = Number(item.price || item.retail_price || item.original_price || item.sell_price || 0);
+                const altSellPrice = Number(item.sell_price || item.member_price || 0);
+                const standardPrice = (altSellPrice > 0 && altSellPrice > normalPrice) ? altSellPrice : (normalPrice || altSellPrice);
 
                 if (!catGroups.has(catName)) {
                     catGroups.set(catName, {
@@ -740,7 +751,7 @@
                     shophenry_id: shId,
                     duration: durLabel,
                     duration_label: durLabel,
-                    price: Number(item.price || item.sell_price || 0),
+                    price: standardPrice,
                     stock: Number(item.stock ?? item.quantity ?? item.available ?? 10),
                     shophenry: true
                 });
@@ -759,7 +770,6 @@
 
         async function loadCatalog(options = {}) {
             try {
-                // Lấy trực tiếp từ nguồn API ShopHenry làm giá gốc chuẩn của người dùng thường
                 const shRawItems = await fetchShopHenryCatalog();
                 let syncedCats = buildSyncedCategories(shRawItems);
                 
