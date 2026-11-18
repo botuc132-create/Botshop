@@ -140,8 +140,6 @@
         .stat-box .stat-lbl { font-size: 10px; color: var(--text-sub); margin: 3px 0 0 0; }
         .ref-link-box { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 12px; padding: 10px 12px; font-size: 11px; color: var(--text-sub); word-break: break-all; margin-bottom: 10px; }
         .ref-btn { width: 100%; background-color: #0d325c; color: var(--accent-blue); border: 1px solid #16467d; padding: 11px; border-radius: 12px; font-size: 12px; font-weight: 700; cursor: pointer; margin-bottom: 10px; }
-        .ref-commission { display: flex; justify-content: space-between; align-items: center; background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 12px; padding: 12px; font-size: 12px; font-weight: 700; }
-        .ref-commission span:last-child { color: var(--accent-yellow); }
         
         .key-row { background-color: #060f1c; border: 1px solid #142a4a; border-radius: 10px; padding: 6px 8px; margin-top: 5px; }
         .key-copy-text { width:100%; text-align:left; font-family:monospace; font-size:11px; color:var(--accent-blue); background:#07111f; border:1px solid #1d3655; border-radius:8px; padding:8px; overflow-wrap:anywhere; cursor:pointer; }
@@ -239,7 +237,7 @@
             </div>
 
             <div id="packages-section">
-                <div class="info-notice-box">
+                <div class="info-notice-box" style="background-color: #0b1a2e; border: 1px solid #14335c; border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; font-size: 11px; color: var(--text-sub); line-height: 1.4;">
                     Hỗ Trợ Tất Cả Các Phiên Bản iOS Và Android , Cài Qua Webmode , Không Có Chứng Chỉ Vẫn Cài Được
                 </div>
 
@@ -350,6 +348,7 @@
                 <button class="admin-action-btn" onclick="adminAction('usercheck')">👤 Quản Lý User</button>
                 <button class="admin-action-btn" onclick="adminAction('add_category')">📁 Thêm Danh Mục</button>
                 <button class="admin-action-btn" onclick="adminAction('add_product')">➕ Thêm Sản Phẩm</button>
+                <button class="admin-action-btn" onclick="adminAction('map_shop')">🔗 Gán ID ShopHenry</button>
                 <button class="admin-action-btn" onclick="adminAction('edit_price')">✏️ Sửa Giá Thường</button>
                 <button class="admin-action-btn" onclick="adminAction('edit_sell_price')">💰 Sửa Giá Sell</button>
                 <button class="admin-action-btn" onclick="adminAction('delete_category')">🗑 Xóa Danh Mục</button>
@@ -400,6 +399,12 @@
         tg.ready();
 
         const API_BASE_URL = window.location.origin;
+        const CATALOG_CACHE_TTL_MS = 20 * 1000;
+        const CATALOG_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+        const catalogCacheKey = `jinny-miniapp-catalog:${tg.initDataUnsafe?.user?.id || 'guest'}`;
+        let catalogFetchedAt = 0;
+        let catalogRequestPromise = null;
+
         let activeDeposit = null;
         let currentUserBalance = 0;
         let categoriesData = [];
@@ -493,15 +498,63 @@
             window.scrollTo(0, 0);
         }
 
-        async function loadCatalog() {
+        function saveCatalogCache() {
             try {
-                const data = await apiRequest('/api/catalog');
-                categoriesData = Array.isArray(data?.categories) ? data.categories : [];
-                document.getElementById('category-count').textContent = categoriesData.length + ' mục';
-                renderCategoriesList();
-                renderAdminCategoriesList();
-                if (categoriesData.length > 0 && !selectedCategory) chooseCategory(categoriesData[0].id);
+                localStorage.setItem(catalogCacheKey, JSON.stringify({
+                    savedAt: catalogFetchedAt || Date.now(),
+                    categories: categoriesData
+                }));
             } catch (e) { console.warn(e); }
+        }
+
+        function applyCatalogData(data, fetchedAt = Date.now()) {
+            categoriesData = Array.isArray(data?.categories) ? data.categories : [];
+            catalogFetchedAt = fetchedAt;
+            document.getElementById('category-count').textContent = categoriesData.length + ' mục';
+            renderCategoriesList();
+            renderAdminCategoriesList();
+            if (categoriesData.length > 0 && !selectedCategory) {
+                chooseCategory(categoriesData[0].id);
+            }
+        }
+
+        function refreshCatalog() {
+            if (catalogRequestPromise) return catalogRequestPromise;
+            catalogRequestPromise = apiRequest('/api/catalog')
+                .then(data => {
+                    applyCatalogData(data);
+                    saveCatalogCache();
+                    return categoriesData;
+                })
+                .catch(e => {
+                    console.warn(e);
+                    if (!categoriesData.length) {
+                        document.getElementById('packages-list').innerHTML = '<p class="deposit-desc">Không tải được cửa hàng.</p>';
+                    }
+                    return categoriesData;
+                })
+                .finally(() => { catalogRequestPromise = null; });
+            return catalogRequestPromise;
+        }
+
+        async function loadCatalog(options = {}) {
+            const forceRefresh = Boolean(options.force);
+            if (!categoriesData.length) {
+                try {
+                    const cached = JSON.parse(localStorage.getItem(catalogCacheKey) || 'null');
+                    const age = Date.now() - Number(cached?.savedAt || 0);
+                    if (Array.isArray(cached?.categories) && age >= 0 && age <= CATALOG_CACHE_MAX_AGE_MS) {
+                        applyCatalogData({categories: cached.categories}, Number(cached.savedAt));
+                    }
+                } catch (_) {}
+            }
+            if (!forceRefresh && categoriesData.length && Date.now() - catalogFetchedAt < CATALOG_CACHE_TTL_MS) {
+                return categoriesData;
+            }
+            const hadCachedData = categoriesData.length > 0;
+            const refreshPromise = refreshCatalog();
+            if (hadCachedData && !forceRefresh) return categoriesData;
+            return await refreshPromise;
         }
 
         function renderCategoriesList() {
@@ -510,8 +563,12 @@
             categoriesData.forEach(cat => {
                 let item = document.createElement('div');
                 item.className = 'category-option-item';
+                let iconHtml = cat.icon && cat.icon.trim() !== '' 
+                    ? `<img src="${cat.icon}" class="select-cat-icon" style="width:38px;height:38px;border-radius:10px;object-fit:cover;">`
+                    : `<div style="width:38px; height:38px; background:#0d2847; border-radius:10px; display:grid; place-items:center; color:var(--accent-blue); font-weight:bold;">${cat.name.slice(0,2).toUpperCase()}</div>`;
+                
                 item.innerHTML = `<div style="display:flex; align-items:center; gap:12px; width:100%;" onclick="chooseCategory(${cat.id}); closeCategoryModal();">
-                    <div style="width:38px; height:38px; background:#0d2847; border-radius:10px; display:grid; place-items:center; color:var(--accent-blue); font-weight:bold;">${cat.name.slice(0,2).toUpperCase()}</div>
+                    ${iconHtml}
                     <div><h5 style="margin:0; font-size:13px; color:white;">${cat.name}</h5><p style="margin:0; font-size:10px; color:var(--text-sub);">ID: ${cat.id}</p></div></div>`;
                 list.appendChild(item);
             });
@@ -539,17 +596,32 @@
             if (!selectedCategory) return;
             document.getElementById('selected-cat-name').innerText = selectedCategory.name;
             
+            const catImg = document.getElementById('selected-category-image');
+            const catDefault = document.getElementById('selected-cat-default-icon');
+            if (selectedCategory.icon) {
+                catImg.src = selectedCategory.icon;
+                catImg.style.display = 'block';
+                catDefault.style.display = 'none';
+            } else {
+                catImg.style.display = 'none';
+                catDefault.style.display = 'block';
+            }
+
             const list = document.getElementById('packages-list');
             list.innerHTML = '';
-            (selectedCategory.products || []).forEach(product => {
-                (product.options || []).forEach(opt => {
-                    const card = document.createElement('div');
-                    card.className = 'package-card';
-                    card.innerHTML = `<div class="pkg-info"><h5>${opt.duration_label || 'Gói'}</h5><p>Kho còn: ${opt.stock}</p></div><div class="pkg-price-box"><p class="pkg-new-price">${Number(opt.price).toLocaleString('vi-VN')}đ</p></div>`;
-                    card.onclick = () => selectPackage(card, opt.duration_label || 'Gói', opt.price, opt.id, product.name);
-                    list.appendChild(card);
+            if (!selectedCategory.products || !selectedCategory.products.length) {
+                list.innerHTML = '<p class="deposit-desc">Danh mục này chưa có sản phẩm.</p>';
+            } else {
+                selectedCategory.products.forEach(product => {
+                    (product.options || []).forEach(opt => {
+                        const card = document.createElement('div');
+                        card.className = 'package-card';
+                        card.innerHTML = `<div class="pkg-info"><h5>${opt.duration_label || 'Gói'}</h5><p>Kho còn: ${opt.stock}</p></div><div class="pkg-price-box"><p class="pkg-new-price">${Number(opt.price).toLocaleString('vi-VN')}đ</p></div>`;
+                        card.onclick = () => selectPackage(card, opt.duration_label || 'Gói', opt.price, opt.id, product.name);
+                        list.appendChild(card);
+                    });
                 });
-            });
+            }
             document.getElementById('checkout-box').style.display = 'none';
         }
 
@@ -585,7 +657,6 @@
                         body: JSON.stringify({ option_id: Number(selectedOptionId), quantity: Number(currentQty) })
                     });
                     
-                    // Hiển thị popup thành công và danh sách key
                     const details = document.getElementById('purchase-success-details');
                     details.innerHTML = `📦 ${selectedPkgName}<br>🔢 Số lượng: ${currentQty}<br>💰 Tổng: ${total.toLocaleString('vi-VN')}đ`;
                     
@@ -597,10 +668,15 @@
                     document.getElementById('purchase-success-modal').classList.add('open');
 
                     await refreshAccountData();
-                    await loadCatalog();
+                    await loadCatalog({force:true});
                 } catch (e) { tg.showAlert(e.message); }
             });
         }
+
+        async function adminApi(action, fields = {}) {
+            return await apiRequest('/api/admin/action', {method:'POST', body:JSON.stringify({action, ...fields})});
+        }
+        async function adminOverview() { return await apiRequest('/api/admin/overview'); }
 
         async function adminAction(type) {
             try {
@@ -609,25 +685,51 @@
                     let name = prompt('Tên danh mục mới:');
                     if (!name) return;
                     fields.name = name.trim();
+                } else if (type === 'add_product') {
+                    const ov = await adminOverview();
+                    const cats = (ov.categories||[]).map(x=>`${x.id}: ${x.name}`).join('\n');
+                    fields.category_id = Number(prompt('Danh mục hiện có:\n' + cats + '\n\nNhập ID danh mục:'));
+                    fields.name = prompt('Tên sản phẩm mới:');
+                    if (!fields.category_id || !fields.name) return;
+                } else if (type === 'map_shop') {
+                    const ov = await adminOverview();
+                    const opts = (ov.options||[]).map(x=>`${x.id}: ${x.product_name} – ${x.duration_label}`).join('\n');
+                    fields.option_id = Number(prompt('Gói hiện có:\n' + opts + '\n\nNhập ID gói sản phẩm:'));
+                    fields.shophenry_product_id = prompt('ShopHenry product_id:');
+                    if (!fields.option_id || !fields.shophenry_product_id) return;
                 } else if (type === 'edit_price' || type === 'edit_sell_price') {
-                    let optId = prompt('Nhập ID gói sản phẩm cần sửa:');
-                    let price = prompt('Nhập giá mới (VNĐ):');
-                    if (!optId || !price) return;
-                    fields.option_id = Number(optId);
-                    fields.price = Number(price);
+                    const ov = await adminOverview();
+                    const opts = (ov.options||[]).map(x=>`${x.id}: ${x.product_name} – ${x.duration_label} (Giá ${x.price})`).join('\n');
+                    fields.option_id = Number(prompt('Gói hiện có:\n' + opts + '\n\nNhập ID gói cần sửa:'));
+                    fields.price = Number(prompt('Nhập giá mới (VNĐ):'));
+                    if (!fields.option_id || isNaN(fields.price)) return;
                 } else if (type === 'delete_category') {
-                    let id = prompt('Nhập ID danh mục cần xóa:');
-                    if (!id) return;
-                    fields.id = Number(id);
+                    fields.id = Number(prompt('Nhập ID danh mục cần xóa:'));
+                    if (!fields.id) return;
                 } else {
                     let val = prompt('Nhập thông tin tham số:');
                     if (!val) return;
                     fields.query = val;
                 }
-                const res = await apiRequest('/api/admin/action', { method: 'POST', body: JSON.stringify({ action: type, ...fields }) });
+                const res = await adminApi(type, fields);
                 tg.showAlert(res.message || 'Thành công.');
-                await loadCatalog();
+                await loadCatalog({force:true});
+                await refreshAccountData();
             } catch (e) { tg.showAlert(e.message); }
+        }
+
+        async function adminAddKeyFlow() {
+            try {
+                const ov = await adminOverview();
+                const options = (ov.options||[]).map(x=>`${x.id}: ${x.product_name} – ${x.duration_label}`).join('\n');
+                const option_id = Number(prompt('Chọn gói để thêm key:\n' + (options || 'Chưa có gói') + '\n\nNhập ID gói sản phẩm:'));
+                if (!option_id) return;
+                const keys = prompt('Dán danh sách key (mỗi key một dòng):');
+                if (!keys) return;
+                const r = await adminApi('add_keys', {option_id, keys});
+                tg.showAlert(r.message);
+                await loadCatalog({force:true});
+            } catch(e) { tg.showAlert(e.message); }
         }
 
         function triggerAppFilePicker() { isEditingAppImage = true; activeEditingCatId = null; document.getElementById('file-selector-input').click(); }
@@ -641,14 +743,20 @@
                 let base64 = String(e.target.result || '');
                 try {
                     if (isEditingAppImage) {
-                        await apiRequest('/api/admin/action', { method: 'POST', body: JSON.stringify({ action: 'set_ff_app_icon', image_data: base64 }) });
+                        await adminApi('set_ff_app_icon', {image_data: base64});
                         applyFFAppIcon(base64);
                         tg.showAlert('Đã đổi ảnh thành công!');
                     } else if (activeEditingCatId !== null) {
-                        // Sửa dứt điểm truyền category_id dạng số nguyên
-                        await apiRequest('/api/admin/action', { method: 'POST', body: JSON.stringify({ action: 'set_category_icon', category_id: Number(activeEditingCatId), image_data: base64 }) });
+                        await adminApi('set_category_icon', {category_id: Number(activeEditingCatId), image_data: base64});
+                        let cat = categoriesData.find(c => Number(c.id) === Number(activeEditingCatId));
+                        if (cat) cat.icon = base64;
+                        renderCategoriesList();
+                        renderAdminCategoriesList();
+                        if (selectedCategory && Number(selectedCategory.id) === Number(activeEditingCatId)) {
+                            chooseCategory(activeEditingCatId);
+                        }
+                        saveCatalogCache();
                         tg.showAlert('Đã đổi ảnh danh mục thành công!');
-                        await loadCatalog();
                         closeAdminModal();
                     }
                 } catch (err) { tg.showAlert('Lỗi: ' + err.message); }
@@ -660,7 +768,8 @@
         function applyFFAppIcon(url) {
             const img = document.getElementById('ff-app-img');
             if (img) { img.src = url; img.style.display = 'block'; }
-            document.getElementById('ff-app-default-icon').style.display = 'none';
+            const def = document.getElementById('ff-app-default-icon');
+            if (def) def.style.display = 'none';
         }
 
         async function createDepositQR() {
@@ -689,6 +798,10 @@
             tg.showAlert('Đã sao chép key.');
         }
 
+        function copyRefLink() {
+            navigator.clipboard.writeText(document.getElementById('ref-link-text').innerText).then(() => tg.showAlert('Đã sao chép link!'));
+        }
+
         function closePurchaseSuccess(e) {
             if (e && e.target.id !== 'purchase-success-modal') return;
             document.getElementById('purchase-success-modal').classList.remove('open');
@@ -705,4 +818,4 @@
         }, 800);
     </script>
 </body>
-</html>
+    </html>
