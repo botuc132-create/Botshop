@@ -101,6 +101,7 @@ async def configure_miniapp_menu_button(application):
 ADMIN_KB = InlineKeyboardMarkup([
     [quick_button('Thông báo', callback_data='adm:broadcast')],
     [quick_button('Thống kê hệ thống', callback_data='adm:stats')],
+    [quick_button('Check LS', callback_data='adm:checkls'), quick_button('Top người SD nhiều nhất', callback_data='adm:topusers')],
     [quick_button('Thông tin người dùng', callback_data='adm:usercheck')],
     [quick_button('Thêm sản phẩm', callback_data='adm:addproduct')],
     [quick_button('Thêm link cách cài', callback_data='adm:addguide')],
@@ -155,6 +156,21 @@ def db():
 
 def now(): return datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).isoformat(timespec='seconds')
 def now_vn(): return datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).strftime('%d/%m/%Y %H:%M:%S')
+def format_vn_time(ts):
+    if not ts:
+        return 'Không rõ'
+    try:
+        if isinstance(ts, str):
+            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        else:
+            dt = ts
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo('Asia/Ho_Chi_Minh'))
+        else:
+            dt = dt.astimezone(ZoneInfo('Asia/Ho_Chi_Minh'))
+        return dt.strftime('%d/%m/%Y %H:%M:%S')
+    except Exception:
+        return str(ts)
 def make_qr_url(amount, memo):
     if not QR_ACCOUNT:
         raise RuntimeError('QR_ACCOUNT chưa được cấu hình.')
@@ -977,6 +993,110 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['flow'] = 'broadcast_content'
         if q.message:
             await q.message.reply_text('Gửi nội dung thông báo (có thể kèm ảnh hoặc chỉ văn bản) muốn gửi đến tất cả người dùng:')
+    elif data == 'adm:checkls':
+        kb = InlineKeyboardMarkup([
+            [quick_button('LS Mua Key', callback_data='adm:ls_buy'),
+             quick_button('LS Nạp', callback_data='adm:ls_deposit')],
+            [InlineKeyboardButton('↩️ Quay lại', callback_data='adm:menu')]
+        ])
+        await q.edit_message_text('📜 <b>KIỂM TRA LỊCH SỬ HỆ THỐNG</b>\n\nChọn loại lịch sử muốn xem:', reply_markup=kb, parse_mode='HTML')
+    elif data == 'adm:ls_buy':
+        with db() as con:
+            rows = con.execute('''
+                SELECT p.id, p.user_id, u.username, p.product_name, p.duration_label, p.keys_text, p.created_at
+                FROM purchases p
+                LEFT JOIN users u ON u.user_id = p.user_id
+                ORDER BY p.id DESC LIMIT 15
+            ''').fetchall()
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton('📥 Xem LS Nạp', callback_data='adm:ls_deposit'),
+             InlineKeyboardButton('↩️ Quay lại', callback_data='adm:checkls')]
+        ])
+        if not rows:
+            await q.edit_message_text('📜 <b>LỊCH SỬ MUA KEY GẦN NHẤT</b>\n\nChưa có giao dịch mua key nào.', reply_markup=kb, parse_mode='HTML')
+            return
+        lines = ['📜 <b>15 LỊCH SỬ MUA KEY GẦN NHẤT</b>\n']
+        for idx, r in enumerate(rows, 1):
+            uname = f"@{escape(r['username'])}" if r.get('username') else 'Không có @'
+            vn_time = format_vn_time(r.get('created_at'))
+            raw_keys = (r.get('keys_text') or '').strip()
+            key_display = escape(raw_keys.replace('\n', ' | '))
+            if len(key_display) > 120:
+                key_display = key_display[:117] + '...'
+            lines.append(
+                f"<b>{idx}.</b> {uname} | ID: <code>{r['user_id']}</code>\n"
+                f"   🔑 Key: <code>{key_display or 'Trống'}</code>\n"
+                f"   🕒 Giờ VN: {vn_time}"
+            )
+        msg_text = '\n'.join(lines)
+        if len(msg_text) > 4000:
+            msg_text = msg_text[:3990] + '\n...'
+        await q.edit_message_text(msg_text, reply_markup=kb, parse_mode='HTML')
+    elif data == 'adm:ls_deposit':
+        with db() as con:
+            rows = con.execute('''
+                SELECT d.id, d.user_id, u.username, d.amount, d.created_at
+                FROM deposits d
+                LEFT JOIN users u ON u.user_id = d.user_id
+                WHERE d.status = 'approved'
+                ORDER BY d.id DESC LIMIT 15
+            ''').fetchall()
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton('🔑 Xem LS Mua Key', callback_data='adm:ls_buy'),
+             InlineKeyboardButton('↩️ Quay lại', callback_data='adm:checkls')]
+        ])
+        if not rows:
+            await q.edit_message_text('📥 <b>LỊCH SỬ NẠP TIỀN GẦN NHẤT</b>\n\nChưa có giao dịch nạp tiền thành công nào.', reply_markup=kb, parse_mode='HTML')
+            return
+        lines = ['📥 <b>15 LỊCH SỬ NẠP TIỀN GẦN NHẤT</b>\n']
+        for idx, r in enumerate(rows, 1):
+            uname = f"@{escape(r['username'])}" if r.get('username') else 'Không có @'
+            vn_time = format_vn_time(r.get('created_at'))
+            lines.append(
+                f"<b>{idx}.</b> {uname} | ID: <code>{r['user_id']}</code>\n"
+                f"   💰 Số tiền: <b>{int(r['amount']):,}đ</b>\n"
+                f"   🕒 Giờ VN: {vn_time}"
+            )
+        msg_text = '\n'.join(lines)
+        if len(msg_text) > 4000:
+            msg_text = msg_text[:3990] + '\n...'
+        await q.edit_message_text(msg_text, reply_markup=kb, parse_mode='HTML')
+    elif data == 'adm:topusers':
+        with db() as con:
+            rows = con.execute('''
+                SELECT u.user_id, u.username, u.full_name, u.balance,
+                       COALESCE(p.total_spent, 0) AS total_spent,
+                       COALESCE(p.order_count, 0) AS order_count,
+                       COALESCE(d.total_dep, 0) AS total_dep
+                FROM users u
+                LEFT JOIN (
+                    SELECT user_id, SUM(total_price) AS total_spent, COUNT(*) AS order_count
+                    FROM purchases
+                    GROUP BY user_id
+                ) p ON p.user_id = u.user_id
+                LEFT JOIN (
+                    SELECT user_id, SUM(amount) AS total_dep
+                    FROM deposits
+                    WHERE status = 'approved'
+                    GROUP BY user_id
+                ) d ON d.user_id = u.user_id
+                ORDER BY COALESCE(p.total_spent, 0) DESC, COALESCE(d.total_dep, 0) DESC, u.balance DESC
+                LIMIT 10
+            ''').fetchall()
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton('↩️ Quay lại', callback_data='adm:menu')]])
+        if not rows:
+            await q.edit_message_text('🏆 <b>TOP 10 NGƯỜI SỬ DỤNG NHIỀU NHẤT</b>\n\nChưa có dữ liệu người dùng.', reply_markup=kb, parse_mode='HTML')
+            return
+        medals = ['🥇', '🥈', '🥉']
+        lines = ['🏆 <b>TOP 10 NGƯỜI SỬ DỤNG NHIỀU NHẤT</b>\n']
+        for idx, r in enumerate(rows, 1):
+            rank = medals[idx - 1] if idx <= 3 else f"<b>#{idx}</b>"
+            uname = f"@{escape(r['username'])}" if r.get('username') else escape(r.get('full_name') or 'Không có @')
+            lines.append(
+                f"{rank} {uname} | ID: <code>{r['user_id']}</code>\n"
+                f"   🛒 Đã tiêu: <b>{int(r['total_spent']):,}đ</b> ({int(r['order_count'])} đơn) | 💳 Nạp: {int(r['total_dep']):,}đ"
+            )
+        await q.edit_message_text('\n'.join(lines), reply_markup=kb, parse_mode='HTML')
     elif data == 'adm:usercheck':
         context.user_data['flow'] = 'user_check_id'
         if q.message:
