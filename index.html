@@ -694,6 +694,7 @@
                     catGroups.set(catName, {
                         id: item.id || autoCatId++,
                         name: catName,
+                        icon: item.icon || item.image || item.image_url || item.logo || '',
                         products: item.products.map((p, pIdx) => ({
                             id: p.id || (index * 100 + pIdx + 1),
                             name: p.name || p.title || 'Sản phẩm',
@@ -722,6 +723,7 @@
                     catGroups.set(catName, {
                         id: autoCatId++,
                         name: catName,
+                        icon: item.category_icon || item.category_image || item.icon || '',
                         _prodMap: new Map()
                     });
                 }
@@ -759,6 +761,22 @@
 
         async function loadCatalog(options = {}) {
             const status = document.getElementById('progress-status-text');
+            if (status) status.textContent = 'ĐANG LẤY SẢN PHẨM TỪ SHOPHENRY...';
+            // Admin đồng bộ danh mục API vào database trước; Mini App và bot cùng đọc một nguồn dữ liệu.
+            if (isAdmin && (options.force || !catalogFetchedAt)) {
+                const rawItems = await fetchShopHenryCatalog();
+                if (rawItems.length) {
+                    const syncedCategories = buildSyncedCategories(rawItems);
+                    if (syncedCategories.length) {
+                        if (status) status.textContent = 'ĐANG LƯU SẢN PHẨM VÀO HỆ THỐNG...';
+                        const syncResult = await adminApi('sync_shophenry_catalog', {categories: syncedCategories});
+                        console.info(syncResult.message || 'ShopHenry catalog synced');
+                        catalogFetchedAt = Date.now();
+                    }
+                } else if (!catalogFetchedAt) {
+                    console.warn('ShopHenry catalog API không trả về danh sách; tiếp tục dùng danh mục đã lưu trong database.');
+                }
+            }
             if (status) status.textContent = 'ĐANG ĐỒNG BỘ SẢN PHẨM VÀ ẢNH...';
             const botData = await apiRequest('/api/catalog');
             if (!Array.isArray(botData?.categories)) {
@@ -1249,7 +1267,8 @@
             const status = document.getElementById('progress-status-text');
             try {
                 if (status) status.textContent = 'ĐANG TẢI TÀI KHOẢN VÀ ĐỒNG BỘ SẢN PHẨM...';
-                await Promise.all([refreshAccountData(), loadCatalog()]);
+                await refreshAccountData();
+                await loadCatalog();
                 if (screen) {
                     screen.style.opacity = '0';
                     setTimeout(() => { screen.style.display = 'none'; }, 300);

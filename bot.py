@@ -1973,6 +1973,74 @@ async def api_admin_action(request: Request):
     add_keys_result = None
     try:
         with db() as con:
+            if action=='sync_shophenry_catalog':
+                incoming=data.get('categories')
+                if not isinstance(incoming,list) or not incoming:
+                    raise HTTPException(status_code=400,detail='ShopHenry không trả về danh sách sản phẩm hợp lệ.')
+                synced_options=0
+                synced_products=0
+                stamp=now()
+                for category in incoming:
+                    if not isinstance(category,dict):
+                        continue
+                    category_name=str(category.get('name') or 'ShopHenry').strip()[:80]
+                    if not category_name:
+                        continue
+                    category_row=con.execute(
+                        'INSERT INTO categories(name,created_by,created_at,icon) VALUES(?,?,?,?) '
+                        'ON CONFLICT(name) DO UPDATE SET icon=CASE WHEN EXCLUDED.icon IS NOT NULL AND EXCLUDED.icon<>\'\' THEN EXCLUDED.icon ELSE categories.icon END '
+                        'RETURNING id',
+                        (category_name,admin['id'],stamp,str(category.get('icon') or ''))
+                    ).fetchone()
+                    cid=category_row['id']
+                    for product in category.get('products') or []:
+                        if not isinstance(product,dict):
+                            continue
+                        product_name=str(product.get('name') or 'Sản phẩm').strip()[:100]
+                        if not product_name:
+                            continue
+                        product_row=con.execute(
+                            'SELECT id FROM products WHERE category_id=? AND LOWER(name)=LOWER(?) ORDER BY id LIMIT 1',
+                            (cid,product_name)
+                        ).fetchone()
+                        if product_row:
+                            pid=product_row['id']
+                        else:
+                            pid=con.execute(
+                                'INSERT INTO products(category_id,name,created_by,created_at) VALUES(?,?,?,?) RETURNING id',
+                                (cid,product_name,admin['id'],stamp)
+                            ).fetchone()['id']
+                            synced_products += 1
+                        for option in product.get('options') or []:
+                            if not isinstance(option,dict):
+                                continue
+                            supplier_id=str(option.get('shophenry_id') or option.get('id') or '').strip()
+                            if not supplier_id.isdigit():
+                                continue
+                            duration_label=str(option.get('duration_label') or option.get('duration') or '1 ngày').strip()[:40]
+                            try:
+                                supplier_price=max(0,int(float(option.get('price') or 0)))
+                            except (TypeError,ValueError):
+                                supplier_price=0
+                            # Mỗi mã sản phẩm ShopHenry là một gói riêng; giữ nguyên giá Sell do admin đã chỉnh.
+                            existing=con.execute(
+                                'SELECT id FROM product_options WHERE shophenry_product_id=? ORDER BY id LIMIT 1',
+                                (supplier_id,)
+                            ).fetchone()
+                            if existing:
+                                con.execute(
+                                    'UPDATE product_options SET product_id=?,duration=?,duration_label=?,price=? WHERE id=?',
+                                    (pid,'shophenry_'+supplier_id,duration_label,supplier_price,existing['id'])
+                                )
+                            else:
+                                con.execute(
+                                    'INSERT INTO product_options(product_id,duration,duration_label,price,sell_price,shophenry_product_id) VALUES(?,?,?,?,0,?)',
+                                    (pid,'shophenry_'+supplier_id,duration_label,supplier_price,supplier_id)
+                                )
+                            synced_options += 1
+                if not synced_options:
+                    raise HTTPException(status_code=400,detail='Không tìm thấy gói sản phẩm có ShopHenry product_id hợp lệ.')
+                return {'success':True,'message':f'Đã đồng bộ {synced_products} sản phẩm mới và {synced_options} gói từ ShopHenry.','synced_products':synced_products,'synced_options':synced_options}
             if action=='set_ff_app_icon':
                 image_data=str(data.get('image_data') or '')
                 if not image_data.startswith('data:image/') or len(image_data)>2_500_000:
