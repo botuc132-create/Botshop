@@ -1965,6 +1965,67 @@ async def api_admin_overview(request: Request):
     return {'categories':cats,'products':products,'options':options,'stats':{'users':users,'revenue':int(revenue),'balances':int(balances)},'maintenance':bool(maint and maint['setting_value']=='on')}
 
 
+def _extract_shophenry_catalog(payload):
+    """Accept the common seller API response envelopes without assuming data is a list."""
+    if isinstance(payload, list):
+        return [x for x in payload if isinstance(x, dict)]
+    if not isinstance(payload, dict):
+        return []
+    # Prefer explicit product/category collections before descending into data.
+    for key in ('products', 'items', 'list', 'categories'):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [x for x in value if isinstance(x, dict)]
+    for key in ('data', 'result', 'response'):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [x for x in value if isinstance(x, dict)]
+        if isinstance(value, dict):
+            found = _extract_shophenry_catalog(value)
+            if found:
+                return found
+    return []
+
+
+def _request_shophenry_catalog():
+    if not SHOPHENRY_API_TOKEN:
+        raise RuntimeError('Thiếu biến SHOPHENRY_API_TOKEN trên Railway. Hãy thêm token ShopHenry vào Variables rồi redeploy.')
+    errors = []
+    for action in ('products', 'list', 'categories', ''):
+        url = SHOPHENRY_API_URL + (('&' if '?' in SHOPHENRY_API_URL else '?') + f'action={action}' if action else '')
+        req = urllib.request.Request(url, method='GET', headers={
+            'Authorization': f'Bearer {SHOPHENRY_API_TOKEN}',
+            'Accept': 'application/json',
+            'User-Agent': 'HmeShopee-MiniApp/1.0',
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=20) as response:
+                raw = response.read().decode('utf-8', errors='replace')
+            payload = json.loads(raw)
+            items = _extract_shophenry_catalog(payload)
+            if items:
+                return items, action or 'default'
+            message = payload.get('message') if isinstance(payload, dict) else ''
+            errors.append(f'{action or "default"}: API không có mảng products/items/categories' + (f' ({message})' if message else ''))
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode('utf-8', errors='replace')[:250]
+            errors.append(f'{action or "default"}: HTTP {exc.code} {body}')
+        except Exception as exc:
+            errors.append(f'{action or "default"}: {str(exc)[:250]}')
+    raise RuntimeError('Không đọc được danh sách sản phẩm ShopHenry. ' + ' | '.join(errors))
+
+
+@web_app.get('/api/admin/shophenry/catalog')
+async def api_admin_shophenry_catalog(request: Request):
+    _mini_user(request, True)
+    try:
+        items, action = await asyncio.to_thread(_request_shophenry_catalog)
+        return {'success': True, 'items': items, 'action': action, 'count': len(items)}
+    except Exception as exc:
+        log.exception('ShopHenry catalog fetch failed')
+        raise HTTPException(status_code=502, detail=str(exc)[:1200])
+
+
 @web_app.post('/api/admin/action')
 async def api_admin_action(request: Request):
     admin=_mini_user(request,True); data=await request.json(); action=str(data.get('action',''))

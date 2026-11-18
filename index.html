@@ -496,7 +496,6 @@
 
         const API_BASE_URL = window.location.origin;
         const SHOPHENRY_API_URL = "https://shophenry.io.vn/api/seller.php";
-        const SHOPHENRY_TOKEN = "sk_live_3f0cefe3182f2c54895460ae01a13351";
 
         let activeDeposit = null;
         let balanceRefreshInterval = null;
@@ -661,27 +660,13 @@
         }
 
         async function fetchShopHenryCatalog() {
-            const actions = ['products', 'list', 'categories', ''];
-            for (const act of actions) {
-                try {
-                    const url = act ? `${SHOPHENRY_API_URL}?action=${act}` : SHOPHENRY_API_URL;
-                    const res = await fetch(url, {
-                        method: 'GET',
-                        headers: {
-                            'Authorization': `Bearer ${SHOPHENRY_TOKEN}`,
-                            'Accept': 'application/json'
-                        }
-                    });
-                    if (!res.ok) continue;
-                    const json = await res.json();
-                    if (json.data && json.data.balance_formatted) {
-                        document.getElementById('user-balance').innerText = json.data.balance_formatted;
-                    }
-                    const rawList = Array.isArray(json) ? json : (json.data || json.products || json.categories || []);
-                    if (Array.isArray(rawList) && rawList.length > 0) return rawList;
-                } catch (_) {}
+            // Fetch from our server so the seller token is never exposed in the Mini App/browser.
+            const result = await apiRequest('/api/admin/shophenry/catalog');
+            if (!result || result.success !== true || !Array.isArray(result.items) || result.items.length === 0) {
+                throw new Error('ShopHenry không trả về danh sách sản phẩm hợp lệ.');
             }
-            return [];
+            console.info(`ShopHenry: nhận ${result.count} mục qua action ${result.action}`);
+            return result.items;
         }
 
         function buildSyncedCategories(rawItems) {
@@ -698,15 +683,18 @@
                         products: item.products.map((p, pIdx) => ({
                             id: p.id || (index * 100 + pIdx + 1),
                             name: p.name || p.title || 'Sản phẩm',
-                            options: (p.options || [p]).map(opt => ({
-                                id: 'sh_' + String(opt.id || opt.product_id || index),
-                                shophenry_id: String(opt.id || opt.product_id || index),
-                                duration: opt.duration || opt.duration_label || opt.name || '1 Ngày',
-                                duration_label: opt.duration_label || opt.duration || opt.name || '1 Ngày',
-                                price: Number(opt.price || opt.sell_price || 0),
-                                stock: Number(opt.stock ?? opt.quantity ?? opt.available ?? 10),
-                                shophenry: true
-                            }))
+                            options: (p.options || [p]).map(opt => {
+                                const supplierId = opt.shophenry_id || opt.product_id || opt.id || p.shophenry_id || p.product_id || p.id;
+                                return {
+                                    id: supplierId ? 'sh_' + String(supplierId) : '',
+                                    shophenry_id: supplierId ? String(supplierId) : '',
+                                    duration: opt.duration || opt.duration_label || opt.name || '1 Ngày',
+                                    duration_label: opt.duration_label || opt.duration || opt.name || '1 Ngày',
+                                    price: Number(opt.price || opt.sell_price || 0),
+                                    stock: Number(opt.stock ?? opt.quantity ?? opt.available ?? 10),
+                                    shophenry: true
+                                };
+                            }).filter(opt => opt.shophenry_id)
                         }))
                     });
                     return;
@@ -717,7 +705,9 @@
                 const parts = fullName.split('-').map(s => s.trim());
                 const prodName = parts.length > 1 ? parts[0] : fullName;
                 const durLabel = item.duration_label || item.duration || (parts.length > 1 ? parts.slice(1).join(' - ') : '1 Ngày');
-                const shId = String(item.id || item.product_id || index);
+                const supplierId = item.shophenry_id || item.product_id || item.id;
+                if (supplierId === undefined || supplierId === null || String(supplierId).trim() === '') return;
+                const shId = String(supplierId).trim();
 
                 if (!catGroups.has(catName)) {
                     catGroups.set(catName, {
@@ -773,8 +763,8 @@
                         console.info(syncResult.message || 'ShopHenry catalog synced');
                         catalogFetchedAt = Date.now();
                     }
-                } else if (!catalogFetchedAt) {
-                    console.warn('ShopHenry catalog API không trả về danh sách; tiếp tục dùng danh mục đã lưu trong database.');
+                } else {
+                    throw new Error('ShopHenry không trả về danh sách sản phẩm.');
                 }
             }
             if (status) status.textContent = 'ĐANG ĐỒNG BỘ SẢN PHẨM VÀ ẢNH...';
@@ -1275,7 +1265,7 @@
                 }
             } catch (error) {
                 console.error('Mini App initial sync failed:', error);
-                if (status) status.textContent = 'ĐỒNG BỘ THẤT BẠI – ĐANG THỬ LẠI...';
+                if (status) status.textContent = 'ĐỒNG BỘ THẤT BẠI: ' + String(error?.message || 'Lỗi không xác định').slice(0, 90) + ' – ĐANG THỬ LẠI...';
                 setTimeout(finishInitialLoading, 2500);
             }
         }
