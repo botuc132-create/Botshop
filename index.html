@@ -500,7 +500,7 @@
         let activeDeposit = null;
         let balanceRefreshInterval = null;
         let currentUserBalance = 0;
-        let isAdmin = false; // Đã định nghĩa biến isAdmin tại đây
+        let isAdmin = false; // Đã định nghĩa biến isAdmin đầy đủ
         let categoriesData = [];
         let selectedCategory = null;
         let selectedOptionId = null;
@@ -516,17 +516,28 @@
 
         async function apiRequest(path, options = {}) {
             if (!tg.initData) throw new Error('Vui lòng mở Mini App từ Telegram để xác thực tài khoản.');
-            const response = await fetch(API_BASE_URL + path, {
-                ...options,
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Telegram-Init-Data': tg.initData,
-                    ...(options.headers || {})
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // Tối ưu timeout 10s tránh treo app
+            try {
+                const response = await fetch(API_BASE_URL + path, {
+                    ...options,
+                    signal: controller.signal,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Telegram-Init-Data': tg.initData,
+                        ...(options.headers || {})
+                    }
+                });
+                clearTimeout(timeoutId);
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.detail || data.message || 'Lỗi kết nối máy chủ.');
+                return data;
+            } catch (err) {
+                if (err.name === 'AbortError') {
+                    throw new Error('Kết nối quá hạn (Timeout). Vui lòng thử lại.');
                 }
-            });
-            const data = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(data.detail || data.message || 'Lỗi kết nối máy chủ.');
-            return data;
+                throw err;
+            }
         }
 
         function formatVietnamTime(value) {
@@ -753,22 +764,22 @@
 
         async function loadCatalog(options = {}) {
             const status = document.getElementById('progress-status-text');
-            if (status) status.textContent = 'ĐANG LẤY SẢN PHẨM TỪ SHOPHENRY...';
-            if (isAdmin && (options.force || !catalogFetchedAt)) {
-                const rawItems = await fetchShopHenryCatalog();
-                if (rawItems.length) {
-                    const syncedCategories = buildSyncedCategories(rawItems);
-                    if (syncedCategories.length) {
-                        if (status) status.textContent = 'ĐANG LƯU SẢN PHẨM VÀO HỆ THỐNG...';
-                        const syncResult = await adminApi('sync_shophenry_catalog', {categories: syncedCategories});
-                        console.info(syncResult.message || 'ShopHenry catalog synced');
-                        catalogFetchedAt = Date.now();
-                    }
-                } else {
-                    throw new Error('ShopHenry không trả về danh sách sản phẩm.');
-                }
-            }
             if (status) status.textContent = 'ĐANG ĐỒNG BỘ SẢN PHẨM VÀ ẢNH...';
+            
+            // Chỉ gọi sync ShopHenry khi thực sự có yêu cầu force để tránh làm chậm app
+            if (isAdmin && options.force) {
+                try {
+                    const rawItems = await fetchShopHenryCatalog();
+                    if (rawItems.length) {
+                        const syncedCategories = buildSyncedCategories(rawItems);
+                        if (syncedCategories.length) {
+                            await adminApi('sync_shophenry_catalog', {categories: syncedCategories});
+                            catalogFetchedAt = Date.now();
+                        }
+                    }
+                } catch(e) { console.warn('ShopHenry sync background warning:', e); }
+            }
+
             const botData = await apiRequest('/api/catalog');
             if (!Array.isArray(botData?.categories)) {
                 throw new Error('Máy chủ chưa trả về danh sách danh mục hợp lệ.');
@@ -821,7 +832,7 @@
                             <h5 style="margin:0; font-size:13px; font-weight:750; color:white;">${cat.name}</h5>
                             <p style="margin:2px 0 0 0; font-size:10px; color:var(--text-sub);">Nhấn để chọn danh mục</p>
                         </div>
-                        <button onclick="event.stopPropagation(); deleteCategoryPrompt('${cat.name}', ${cat.id})" style="background:#3d1518; border:1px solid #7d262d; color:#ff6677; font-size:10px; font-weight:700; padding:6px 10px; border-radius:8px; cursor:pointer;">🗑 Xóa mục</button>
+                        <button onclick="event.stopPropagation(); deleteCategoryPrompt('${cat.name}', ${Number(cat.id)})" style="background:#3d1518; border:1px solid #7d262d; color:#ff6677; font-size:10px; font-weight:700; padding:6px 10px; border-radius:8px; cursor:pointer;">🗑 Xóa mục</button>
                     </div>
                 `;
                 listContainer.appendChild(item);
@@ -832,7 +843,7 @@
             if (!confirm(`Bạn có chắc chắn muốn xóa mục [${catName}] không?`)) return;
             try {
                 const result = await adminApi('delete_category', { id: Number(catId) });
-                await loadCatalog({force:true});
+                await loadCatalog({force:false});
                 closeCategoryModal();
                 tg.showAlert(result.message || `Đã xóa mục [${catName}] thành công!`);
             } catch(e) {
@@ -1045,7 +1056,7 @@
                     });
 
                     void refreshAccountData();
-                    void loadCatalog({ force: true });
+                    void loadCatalog({ force: false });
                     currentQty = 1;
                     document.getElementById('qty-number').innerText = '1';
                 } catch (error) {
@@ -1200,7 +1211,7 @@
                 }
                 else if(actionType==='delete_category'||actionType==='delete_product') { tg.showAlert(actionType==='delete_category'?'Danh mục:\n'+cats:'Sản phẩm:\n'+products); fields.id=Number(adminAsk('Nhập ID cần xóa:')); if(!fields.id)return; if(!confirm('Xác nhận xóa?'))return; }
                 const r=await adminApi(actionType,fields); tg.showAlert(r.message || 'Thành công.');
-                await loadCatalog({force:true}); await refreshAccountData();
+                await loadCatalog({force:false}); await refreshAccountData();
             } catch(e) { tg.showAlert(e.message || 'Lỗi thao tác Admin.'); }
         }
 
@@ -1253,23 +1264,21 @@
             navigator.clipboard.writeText(document.getElementById('ref-link-text').innerText).then(() => tg.showAlert('Đã sao chép link!'));
         }
 
+        // Tối ưu tốc độ tải: Ẩn màn hình loading ngay lập tức và tải dữ liệu ngầm không gây đơ app
         async function finishInitialLoading() {
             const screen = document.getElementById('loading-screen');
-            const status = document.getElementById('progress-status-text');
+            if (screen) {
+                screen.style.opacity = '0';
+                setTimeout(() => { screen.style.display = 'none'; }, 200);
+            }
             try {
-                if (status) status.textContent = 'ĐANG TẢI TÀI KHOẢN VÀ ĐỒNG BỘ SẢN PHẨM...';
                 await refreshAccountData();
-                await loadCatalog();
-                if (screen) {
-                    screen.style.opacity = '0';
-                    setTimeout(() => { screen.style.display = 'none'; }, 300);
-                }
+                await loadCatalog({force: false});
             } catch (error) {
                 console.error('Mini App initial sync failed:', error);
-                if (status) status.textContent = 'ĐỒNG BỘ THẤT BẠI: ' + String(error?.message || 'Lỗi không xác định').slice(0, 90) + ' – ĐANG THỬ LẠI...';
-                setTimeout(finishInitialLoading, 2500);
             }
         }
+        
         finishInitialLoading();
         if (balanceRefreshInterval) clearInterval(balanceRefreshInterval);
         balanceRefreshInterval = setInterval(refreshAccountData, 15000);
