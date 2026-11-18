@@ -1983,7 +1983,7 @@ async def api_admin_action(request: Request):
                     (image_data,stamp))
                 return {'success':True,'message':'Đã lưu ảnh Free Fire. Ảnh sẽ hiển thị cho tất cả người dùng.'}
             if action=='set_category_icon':
-                category_id=int(data.get('category_id'))
+                category_id=int(data.get('category_id') or 0)
                 image_data=str(data.get('image_data') or '')
                 if not image_data.startswith('data:image/') or len(image_data)>2_500_000:
                     raise HTTPException(status_code=400,detail='Ảnh không hợp lệ hoặc vượt quá dung lượng cho phép.')
