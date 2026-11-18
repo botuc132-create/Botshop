@@ -500,6 +500,7 @@
         let activeDeposit = null;
         let balanceRefreshInterval = null;
         let currentUserBalance = 0;
+        let isAdmin = false; // Đã định nghĩa biến isAdmin tại đây
         let categoriesData = [];
         let selectedCategory = null;
         let selectedOptionId = null;
@@ -545,6 +546,8 @@
             try {
                 const data = await apiRequest('/api/me');
                 currentUserBalance = Number(data.balance || 0);
+                isAdmin = Boolean(data.is_admin); // Gán giá trị isAdmin từ API trả về
+                
                 document.getElementById('user-balance').innerText = currentUserBalance.toLocaleString('vi-VN') + 'đ';
                 document.getElementById('total-deposit-value').innerText = Number(data.total_deposit || 0).toLocaleString('vi-VN') + 'đ';
                 
@@ -660,7 +663,6 @@
         }
 
         async function fetchShopHenryCatalog() {
-            // Fetch from our server so the seller token is never exposed in the Mini App/browser.
             const result = await apiRequest('/api/admin/shophenry/catalog');
             if (!result || result.success !== true || !Array.isArray(result.items) || result.items.length === 0) {
                 throw new Error('ShopHenry không trả về danh sách sản phẩm hợp lệ.');
@@ -752,7 +754,6 @@
         async function loadCatalog(options = {}) {
             const status = document.getElementById('progress-status-text');
             if (status) status.textContent = 'ĐANG LẤY SẢN PHẨM TỪ SHOPHENRY...';
-            // Admin đồng bộ danh mục API vào database trước; Mini App và bot cùng đọc một nguồn dữ liệu.
             if (isAdmin && (options.force || !catalogFetchedAt)) {
                 const rawItems = await fetchShopHenryCatalog();
                 if (rawItems.length) {
