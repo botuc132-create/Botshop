@@ -35,7 +35,7 @@ from telegram.ext import (
 
 DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
 BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
-SHOPHENRY_API_TOKEN = os.getenv('SHOPHENRY_API_TOKEN', '').strip()
+SHOPHENRY_API_TOKEN = os.getenv('SHOPHENRY_API_TOKEN', 'sk_live_3f0cefe3182f2c54895460ae01a13351').strip()
 SHOPHENRY_API_URL = os.getenv('SHOPHENRY_API_URL', 'https://shophenry.io.vn/api/seller.php').strip()
 ADMIN_IDS = {int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip().isdigit()}
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
