@@ -213,11 +213,6 @@
             transition: all 0.3s ease;
             box-shadow: 0 0 20px rgba(14, 165, 233, 0.45);
         }
-        .btn-neon:hover:not(:disabled) {
-            background-position: right center;
-            transform: translateY(-2px);
-            box-shadow: 0 0 30px rgba(56, 189, 248, 0.75);
-        }
     </style>
 </head>
 <body>
@@ -332,16 +327,18 @@
         </div>
     </div>
 
+    <!-- MODAL CHỌN MỤC / XÓA MỤC -->
     <div class="modal-overlay" id="category-modal" onclick="closeCategoryModal(event)">
         <div class="modal-content" onclick="event.stopPropagation()">
             <div class="modal-header">
-                <div class="modal-title" id="modal-main-title">DANH SÁCH SẢN PHẨM SHOPHENRY</div>
+                <div class="modal-title" id="modal-main-title">CHỌN HOẶC XÓA MỤC SẢN PHẨM</div>
                 <button class="close-modal-btn" onclick="closeCategoryModal()">✕</button>
             </div>
             <div id="category-options-list"></div>
         </div>
     </div>
 
+    <!-- MODAL QUẢN LÝ ẢNH MỤC -->
     <div class="admin-modal-overlay" id="admin-category-modal" onclick="closeAdminModal(event)">
         <div class="modal-content" onclick="event.stopPropagation()">
             <div class="modal-header">
@@ -369,6 +366,7 @@
         </div>
     </div>
 
+    <!-- TAB NẠP TIỀN -->
     <div id="tab-deposit" class="tab-content">
         <div class="deposit-card">
             <div class="deposit-title">NẠP TIỀN QUA MÃ QR</div>
@@ -410,6 +408,7 @@
         </div>
     </div>
 
+    <!-- TAB CÁ NHÂN & ADMIN -->
     <div id="tab-profile" class="tab-content">
         <div class="admin-card admin-panel-card" id="admin-panel-section">
             <div class="admin-title">QUẢN TRỊ ADMIN (HỆ THỐNG)</div>
@@ -510,6 +509,10 @@
         let selectedPkgName = '';
         let selectedPkgPrice = 0;
         let catalogFetchedAt = 0;
+        let activeEditingCatId = null;
+        let isEditingAppImage = false;
+        let countdownInterval = null;
+        let depositSubmitBusy = false;
 
         async function apiRequest(path, options = {}) {
             if (!tg.initData) throw new Error('Vui lòng mở Mini App từ Telegram để xác thực tài khoản.');
@@ -601,11 +604,14 @@
                 document.getElementById('total-spent-value').innerText = Number(data.total_spent || 0).toLocaleString('vi-VN') + 'đ';
                 
                 const role = document.getElementById('user-role-badge');
+                const adminPanel = document.getElementById('admin-panel-section');
+                const editAppBtn = document.getElementById('btn-edit-ff-img');
+
                 role.style.display = 'inline-block';
                 if (data.is_admin) {
                     role.textContent = 'ADMIN'; role.className = 'role-badge admin';
-                    document.getElementById('admin-panel-section').style.display = 'block';
-                    document.getElementById('btn-edit-ff-img').style.display = 'block';
+                    if (adminPanel) adminPanel.style.display = 'block';
+                    if (editAppBtn) editAppBtn.style.display = 'block';
                 } else if (data.is_seller) {
                     role.textContent = 'RESELLER'; role.className = 'role-badge reseller';
                 } else {
@@ -654,7 +660,6 @@
             window.scrollTo(0, 0);
         }
 
-        // Tự động kéo danh sách sản phẩm từ ShopHenry API (action=products, list,...)
         async function fetchShopHenryCatalog() {
             const actions = ['products', 'list', 'categories', ''];
             for (const act of actions) {
@@ -669,16 +674,11 @@
                     });
                     if (!res.ok) continue;
                     const json = await res.json();
-                    
-                    // Cập nhật số dư đại lý từ phản hồi ShopHenry nếu có
                     if (json.data && json.data.balance_formatted) {
                         document.getElementById('user-balance').innerText = json.data.balance_formatted;
                     }
-
                     const rawList = Array.isArray(json) ? json : (json.data || json.products || json.categories || []);
-                    if (Array.isArray(rawList) && rawList.length > 0) {
-                        return rawList;
-                    }
+                    if (Array.isArray(rawList) && rawList.length > 0) return rawList;
                 } catch (_) {}
             }
             return [];
@@ -754,43 +754,47 @@
                 }
                 synced.push(cat);
             });
-
             return synced;
         }
 
         async function loadCatalog(options = {}) {
             try {
                 const shRawItems = await fetchShopHenryCatalog();
-                categoriesData = buildSyncedCategories(shRawItems);
+                let syncedCats = buildSyncedCategories(shRawItems);
                 
-                if (!categoriesData.length) {
-                    // Mặc định mẫu Free Fire nếu API chưa trả về danh sách đầy đủ
-                    categoriesData = [{
-                        id: 1,
-                        name: 'Free Fire',
-                        products: [
-                            {
-                                id: 1,
-                                name: 'Free Fire VIP Tool',
-                                options: [
-                                    { id: 'sh_1', shophenry_id: '1', duration: '1 Ngày', duration_label: '1 Ngày', price: 20000, stock: 99, shophenry: true },
-                                    { id: 'sh_2', shophenry_id: '2', duration: '7 Ngày', duration_label: '7 Ngày', price: 100000, stock: 99, shophenry: true }
-                                ]
+                try {
+                    const botData = await apiRequest('/api/catalog');
+                    if (Array.isArray(botData?.categories) && botData.categories.length > 0) {
+                        botData.categories.forEach(botCat => {
+                            if (!syncedCats.some(c => c.name.toLowerCase() === botCat.name.toLowerCase())) {
+                                syncedCats.push(botCat);
                             }
-                        ]
-                    }];
-                }
+                        });
+                    }
+                } catch(_) {}
+
+                categoriesData = syncedCats.length > 0 ? syncedCats : [{
+                    id: 1,
+                    name: 'Free Fire',
+                    products: [
+                        {
+                            id: 1,
+                            name: 'Free Fire VIP Tool',
+                            options: [
+                                { id: 'sh_1', shophenry_id: '1', duration: '1 Ngày', duration_label: '1 Ngày', price: 20000, stock: 99, shophenry: true },
+                                { id: 'sh_2', shophenry_id: '2', duration: '7 Ngày', duration_label: '7 Ngày', price: 100000, stock: 99, shophenry: true }
+                            ]
+                        }
+                    ]
+                }];
 
                 document.getElementById('category-count').textContent = categoriesData.length + ' mục';
                 renderCategoriesList();
-                
-                // Tự động chọn danh mục đầu tiên (Free Fire) để hiển thị gói ngay lập tức
-                if (categoriesData.length > 0) {
+                if (categoriesData.length > 0 && !selectedCategory) {
                     chooseCategory(categoriesData[0].name);
                 }
             } catch (e) {
                 console.warn('Lỗi tải danh mục ShopHenry:', e);
-                document.getElementById('packages-list').innerHTML = '<p class="deposit-desc" style="color:#ff3344;">Không thể kết nối danh mục từ ShopHenry API.</p>';
             }
         }
 
@@ -804,23 +808,70 @@
                 item.innerHTML = `
                     <div style="display:flex; align-items:center; gap:12px; width:100%;" onclick="chooseCategory('${cat.name}'); closeCategoryModal();">
                         <div style="width:38px; height:38px; background:#0d2847; border-radius:10px; display:flex; justify-content:center; align-items:center; color:var(--accent-blue); font-weight:bold;">FF</div>
-                        <div>
+                        <div style="flex-grow:1;">
                             <h5 style="margin:0; font-size:13px; font-weight:750; color:white;">${cat.name}</h5>
                             <p style="margin:2px 0 0 0; font-size:10px; color:var(--text-sub);">Nhấn để chọn danh mục</p>
                         </div>
+                        <button onclick="event.stopPropagation(); deleteCategoryPrompt('${cat.name}', ${cat.id})" style="background:#3d1518; border:1px solid #7d262d; color:#ff6677; font-size:10px; font-weight:700; padding:6px 10px; border-radius:8px; cursor:pointer;">🗑 Xóa mục</button>
                     </div>
                 `;
                 listContainer.appendChild(item);
             });
         }
 
+        async function deleteCategoryPrompt(catName, catId) {
+            if (!confirm(`Bạn có chắc chắn muốn xóa mục [${catName}] không?`)) return;
+            try {
+                await adminApi('delete_category', { id: catId }).catch(() => {});
+                categoriesData = categoriesData.filter(c => c.name !== catName);
+                renderCategoriesList();
+                closeCategoryModal();
+                tg.showAlert(`Đã xóa mục [${catName}] thành công!`);
+                if (selectedCategory?.name === catName) {
+                    if (categoriesData.length > 0) chooseCategory(categoriesData[0].name);
+                    else {
+                        document.getElementById('packages-list').innerHTML = '<p class="deposit-desc">Không còn mục sản phẩm nào.</p>';
+                        document.getElementById('selected-cat-name').innerText = 'Chưa chọn';
+                    }
+                }
+            } catch(e) {
+                tg.showAlert('Không thể xóa mục: ' + e.message);
+            }
+        }
+
         function openCategoryModal() {
+            renderCategoriesList();
             tg.HapticFeedback?.impactOccurred('light');
             document.getElementById('category-modal').classList.add('open');
         }
 
         function closeCategoryModal() {
             document.getElementById('category-modal').classList.remove('open');
+        }
+
+        function openAdminCategoryModal() {
+            tg.HapticFeedback?.impactOccurred('light');
+            let listContainer = document.getElementById('admin-category-items-list');
+            listContainer.innerHTML = '';
+            categoriesData.forEach(cat => {
+                let item = document.createElement('div');
+                item.className = 'category-option-item';
+                item.innerHTML = `
+                    <div style="display:flex; align-items:center; gap:12px;">
+                        <div>
+                            <h5 style="margin:0; font-size:13px; font-weight:750; color:white;">${cat.name}</h5>
+                            <p style="margin:2px 0 0 0; font-size:10px; color:var(--text-sub);">Đổi ảnh danh mục</p>
+                        </div>
+                    </div>
+                    <button onclick="triggerCategoryFilePicker('${cat.name}')" style="background:#14335c; border:none; color:white; font-size:11px; font-weight:700; padding:8px 12px; border-radius:8px; cursor:pointer;">+ Đổi ảnh</button>
+                `;
+                listContainer.appendChild(item);
+            });
+            document.getElementById('admin-category-modal').classList.add('open');
+        }
+
+        function closeAdminModal() {
+            document.getElementById('admin-category-modal').classList.remove('open');
         }
 
         function chooseCategory(catName) {
@@ -953,7 +1004,6 @@
             document.getElementById('purchase-success-modal').classList.remove('open');
         }
 
-        // Thực hiện mua hàng: Gửi trực tiếp Token sang ShopHenry API để lấy Key và trừ số dư đồng bộ
         async function executeBuy() {
             if (!selectedOptionId) {
                 tg.showAlert('Vui lòng chọn gói sản phẩm từ danh mục.');
@@ -974,7 +1024,6 @@
                 try {
                     const shProductId = selectedOptionObj?.shophenry_id || String(selectedOptionId).replace(/^sh_/, '');
                     
-                    // Gọi trực tiếp ShopHenry API action=buy
                     const shRes = await fetch(`${SHOPHENRY_API_URL}?action=buy`, {
                         method: 'POST',
                         headers: {
@@ -996,9 +1045,8 @@
                     const orderInfo = shPayload.data || {};
                     let rawKeys = orderInfo.key || orderInfo.keys || orderInfo.key_list || [];
                     if (Array.isArray(rawKeys)) rawKeys = rawKeys.join('\n');
-                    const keysText = String(rawKeys || 'Thành công (Kiểm tra kho hệ thống)');
+                    const keysText = String(rawKeys || 'Thành công');
 
-                    // Đồng thời gửi log mua hàng ngầm về bot backend nếu có
                     try {
                         await apiRequest('/api/purchases', {
                             method: 'POST',
@@ -1057,6 +1105,23 @@
                 qrImage.src = data.qr_url;
                 document.getElementById('qr-display-amount').innerText = Number(data.amount).toLocaleString('vi-VN') + 'đ';
                 document.getElementById('qr-result-container').style.display = 'block';
+                
+                const paidButton = document.querySelector('#qr-result-container button');
+                const statusLabel = document.querySelector('#qr-result-container > div:first-child');
+                statusLabel.textContent = 'ĐANG THANH TOÁN';
+                paidButton.disabled = false;
+                paidButton.textContent = 'ĐÃ CHUYỂN TIỀN';
+                startCountdown(300);
+
+                let memoNode = document.getElementById('deposit-transfer-content');
+                if (!memoNode) {
+                    memoNode = document.createElement('div');
+                    memoNode.id = 'deposit-transfer-content';
+                    memoNode.style.cssText = 'color:#ffcc00;font-weight:800;margin:10px 0;word-break:break-all;';
+                    document.querySelector('#qr-result-container').insertBefore(memoNode, document.querySelector('#qr-result-container button'));
+                }
+                memoNode.textContent = 'NỘI DUNG CK: ' + data.transfer_content;
+                document.getElementById('qr-result-container').scrollIntoView({behavior:'smooth'});
                 tg.HapticFeedback?.notificationOccurred('success');
             } catch (error) {
                 tg.showAlert(error.message);
@@ -1066,28 +1131,145 @@
             }
         }
 
-        async function copyKey(keyValue) {
+        function startCountdown(duration) {
+            if (countdownInterval) clearInterval(countdownInterval);
+            let timer = duration;
+            const display = document.getElementById('countdown-timer');
+            const paidButton = document.querySelector('#qr-result-container button');
+            const tick = () => {
+                const minutes = String(Math.floor(timer / 60)).padStart(2, '0');
+                const seconds = String(timer % 60).padStart(2, '0');
+                display.textContent = minutes + ':' + seconds;
+                if (timer <= 0) {
+                    clearInterval(countdownInterval);
+                    display.textContent = '00:00 (Hết hạn)';
+                    if (paidButton) paidButton.disabled = true;
+                    return;
+                }
+                timer -= 1;
+            };
+            tick();
+            countdownInterval = setInterval(tick, 1000);
+        }
+
+        async function confirmPaidAction() {
+            if (depositSubmitBusy) return;
+            if (!activeDeposit || !activeDeposit.deposit_id) {
+                tg.showAlert('Bạn chưa tạo mã QR hợp lệ.');
+                return;
+            }
+            const submitButton = document.querySelector('#qr-result-container button');
+            depositSubmitBusy = true;
+            if (submitButton) { submitButton.disabled = true; submitButton.textContent = 'ĐANG XÉT DUYỆT...'; }
             try {
-                await navigator.clipboard.writeText(keyValue);
-                tg.showAlert('Đã sao chép key.');
-            } catch (_) {
-                tg.showAlert('Không thể sao chép key trên thiết bị này.');
+                const data = await apiRequest('/api/deposits/' + activeDeposit.deposit_id + '/submitted', {
+                    method: 'POST',
+                    body: JSON.stringify({})
+                });
+                tg.HapticFeedback?.notificationOccurred('success');
+                tg.showAlert(data.message || 'Đã gửi yêu cầu nạp tiền tới Admin.');
+                if (submitButton) submitButton.textContent = 'BOT ĐANG XÉT DUYỆT';
+                if (countdownInterval) clearInterval(countdownInterval);
+                await refreshAccountData();
+            } catch (error) {
+                tg.showAlert(error.message);
+                if (submitButton) { submitButton.disabled = false; submitButton.textContent = 'ĐÃ CHUYỂN TIỀN'; }
+            } finally {
+                depositSubmitBusy = false;
             }
         }
 
-        // Khởi chạy hệ thống ngay khi tải trang
+        async function adminApi(action, fields = {}) {
+            return await apiRequest('/api/admin/action', {method:'POST', body:JSON.stringify({action, ...fields})});
+        }
+        async function adminOverview() { return await apiRequest('/api/admin/overview'); }
+        function adminAsk(label, example='') {
+            const value = prompt(label + (example ? '\nVí dụ: ' + example : ''));
+            return value === null ? null : value.trim();
+        }
+        function adminMoney(v) { return Number(v || 0).toLocaleString('vi-VN') + 'đ'; }
+
+        async function adminAction(actionType) {
+            try {
+                if (actionType === 'stats') {
+                    const r=await adminApi('stats'); const x=r.stats;
+                    tg.showAlert(`📊 THỐNG KÊ HỆ THỐNG\nNgười dùng: ${Number(x.users).toLocaleString('vi-VN')}\nTổng nạp: ${adminMoney(x.deposits)}\nSố dư: ${adminMoney(x.balances)}\nĐơn mua: ${Number(x.purchases).toLocaleString('vi-VN')}`); return;
+                }
+                if (actionType === 'broadcast') {
+                    const message=adminAsk('Nhập nội dung thông báo:'); if(!message) return;
+                    if(!confirm('Xác nhận gửi thông báo?')) return;
+                    const r=await adminApi('broadcast',{message}); tg.showAlert(r.message); return;
+                }
+                if (actionType === 'maintenance') {
+                    const r=await adminApi('maintenance'); tg.showAlert(r.message); return;
+                }
+                const ov=await adminOverview();
+                const cats=(ov.categories||[]).map(x=>`${x.id}: ${x.name}`).join('\n') || 'Chưa có danh mục';
+                const products=(ov.products||[]).map(x=>`${x.id}: ${x.name}`).join('\n') || 'Chưa có sản phẩm';
+                const options=(ov.options||[]).map(x=>`${x.id}: ${x.product_name} – ${x.duration_label} (giá ${x.price})`).join('\n') || 'Chưa có gói';
+                let fields={};
+                if(actionType==='add_category') { fields.name=adminAsk('Tên danh mục mới:'); if(!fields.name)return; }
+                else if(actionType==='add_product') { tg.showAlert('Danh mục:\n'+cats); fields.category_id=Number(adminAsk('ID danh mục:')); fields.name=adminAsk('Tên sản phẩm:'); if(!fields.category_id||!fields.name)return; }
+                else if(actionType==='map_shop') { tg.showAlert('Các gói:\n'+options); fields.option_id=Number(adminAsk('ID gói sản phẩm:')); fields.shophenry_product_id=adminAsk('ShopHenry product_id:'); if(!fields.option_id||!fields.shophenry_product_id)return; }
+                else if(actionType==='edit_price'||actionType==='edit_sell_price') { tg.showAlert('Các gói:\n'+options); fields.option_id=Number(adminAsk('ID gói cần sửa:')); fields.price=Number(adminAsk('Giá mới (VNĐ):')); if(!fields.option_id||isNaN(fields.price))return; }
+                else if(actionType==='delete_category'||actionType==='delete_product') { tg.showAlert(actionType==='delete_category'?'Danh mục:\n'+cats:'Sản phẩm:\n'+products); fields.id=Number(adminAsk('Nhập ID cần xóa:')); if(!fields.id)return; if(!confirm('Xác nhận xóa?'))return; }
+                const r=await adminApi(actionType,fields); tg.showAlert(r.message || 'Thành công.');
+                await loadCatalog({force:true}); await refreshAccountData();
+            } catch(e) { tg.showAlert(e.message || 'Lỗi thao tác Admin.'); }
+        }
+
+        function triggerAppFilePicker() { isEditingAppImage = true; activeEditingCatId = null; document.getElementById('file-selector-input').click(); }
+        function triggerCategoryFilePicker(catName) { isEditingAppImage = false; activeEditingCatId = catName; document.getElementById('file-selector-input').click(); }
+
+        async function handleFileSelected(event) {
+            let file = event.target.files[0];
+            if (file) {
+                let reader = new FileReader();
+                reader.onload = async function(e) {
+                    let imageUrl = String(e.target.result || '');
+                    if (isEditingAppImage) {
+                        try {
+                            await adminApi('set_ff_app_icon', {image_data:imageUrl});
+                            applyFFAppIcon(imageUrl);
+                            tg.showAlert('Đã đổi ảnh Free Fire thành công!');
+                        } catch (err) { tg.showAlert('Lỗi: ' + err.message); }
+                    } else if (activeEditingCatId !== null) {
+                        try {
+                            await adminApi('set_category_icon', {category_name: activeEditingCatId, image_data: imageUrl});
+                            tg.showAlert(`Đã đổi ảnh cho mục "${activeEditingCatId}" thành công!`);
+                        } catch (err) { tg.showAlert('Lỗi đổi ảnh mục: ' + err.message); }
+                    }
+                };
+                reader.readAsDataURL(file);
+            }
+            event.target.value = '';
+        }
+
+        function applyFFAppIcon(url) {
+            if (!url) return;
+            const img = document.getElementById('ff-app-img');
+            if (img) { img.src = url; img.style.display = 'block'; }
+            const fallback = document.getElementById('ff-app-default-icon');
+            if (fallback) fallback.style.display = 'none';
+        }
+
+        async function copyKey(keyValue) {
+            try { await navigator.clipboard.writeText(keyValue); tg.showAlert('Đã sao chép key.'); }
+            catch (_) { tg.showAlert('Không thể sao chép.'); }
+        }
+
+        function copyRefLink() {
+            navigator.clipboard.writeText(document.getElementById('ref-link-text').innerText).then(() => tg.showAlert('Đã sao chép link!'));
+        }
+
         refreshAccountData();
         loadCatalog();
         if (balanceRefreshInterval) clearInterval(balanceRefreshInterval);
         balanceRefreshInterval = setInterval(refreshAccountData, 15000);
 
-        // Ẩn màn hình loading sau 1 giây
         setTimeout(() => {
             const screen = document.getElementById('loading-screen');
-            if (screen) {
-                screen.style.opacity = '0';
-                setTimeout(() => screen.style.display = 'none', 300);
-            }
+            if (screen) { screen.style.opacity = '0'; setTimeout(() => screen.style.display = 'none', 300); }
         }, 1000);
     </script>
 </body>
