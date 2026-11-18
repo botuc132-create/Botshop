@@ -128,7 +128,7 @@
         .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #102138; }
         .modal-title { font-size: 14px; font-weight: 800; color: var(--accent-blue); }
         .close-modal-btn { background-color: #102138; border: none; color: var(--accent-blue); width: 28px; height: 28px; border-radius: 50%; font-weight: bold; cursor: pointer; }
-        .category-option-item { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; cursor: pointer; }
+        .category-option-item { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 
         .deposit-card, .history-card, .overview-card, .ref-card, .kho-card, .admin-card { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 20px; padding: 17px 13px; margin-bottom: 16px; }
         .deposit-title, .admin-title { font-size: 15px; font-weight: 800; color: var(--accent-yellow); margin: 0 0 4px 0; }
@@ -546,6 +546,7 @@
             try {
                 const data = await apiRequest('/api/me');
                 currentUserBalance = Number(data.balance || 0);
+                window.isUserAdmin = Boolean(data.is_admin);
                 document.getElementById('user-balance').innerText = currentUserBalance.toLocaleString('vi-VN') + 'đ';
                 document.getElementById('total-deposit-value').innerText = Number(data.total_deposit || 0).toLocaleString('vi-VN') + 'đ';
                 
@@ -759,34 +760,27 @@
 
         async function loadCatalog(options = {}) {
             try {
-                const shRawItems = await fetchShopHenryCatalog();
-                let syncedCats = buildSyncedCategories(shRawItems);
-                
-                try {
-                    const botData = await apiRequest('/api/catalog');
-                    if (Array.isArray(botData?.categories) && botData.categories.length > 0) {
-                        botData.categories.forEach(botCat => {
-                            if (!syncedCats.some(c => c.name.toLowerCase() === botCat.name.toLowerCase())) {
-                                syncedCats.push(botCat);
-                            }
-                        });
-                    }
-                } catch(_) {}
-
-                categoriesData = syncedCats.length > 0 ? syncedCats : [{
-                    id: 1,
-                    name: 'Free Fire',
-                    products: [
-                        {
-                            id: 1,
-                            name: 'Free Fire VIP Tool',
-                            options: [
-                                { id: 'sh_1', shophenry_id: '1', duration: '1 Ngày', duration_label: '1 Ngày', price: 20000, stock: 99, shophenry: true },
-                                { id: 'sh_2', shophenry_id: '2', duration: '7 Ngày', duration_label: '7 Ngày', price: 100000, stock: 99, shophenry: true }
-                            ]
-                        }
-                    ]
-                }];
+                const botData = await apiRequest('/api/catalog').catch(() => null);
+                if (botData && Array.isArray(botData.categories) && botData.categories.length > 0) {
+                    categoriesData = botData.categories.map(cat => ({
+                        ...cat,
+                        id: Number(cat.id),
+                        name: String(cat.name || '').trim(),
+                        icon: cat.icon || '',
+                        products: (cat.products || []).map(product => ({
+                            ...product,
+                            options: (product.options || []).map(option => ({
+                                ...option,
+                                id: Number(option.id),
+                                price: Number(option.price || 0),
+                                stock: Number(option.stock || 0)
+                            }))
+                        }))
+                    }));
+                } else {
+                    const shRawItems = await fetchShopHenryCatalog();
+                    categoriesData = buildSyncedCategories(shRawItems);
+                }
 
                 document.getElementById('category-count').textContent = categoriesData.length + ' mục';
                 renderCategoriesList();
@@ -794,7 +788,7 @@
                     chooseCategory(categoriesData[0].name);
                 }
             } catch (e) {
-                console.warn('Lỗi tải danh mục ShopHenry:', e);
+                console.warn('Lỗi tải danh mục:', e);
             }
         }
 
@@ -803,16 +797,22 @@
             listContainer.innerHTML = '';
 
             categoriesData.forEach(cat => {
+                let cleanName = String(cat.name || '').trim();
                 let item = document.createElement('div');
                 item.className = 'category-option-item';
+                
+                let deleteBtnHtml = window.isUserAdmin ? 
+                    `<button onclick="event.stopPropagation(); deleteCategoryPrompt('${cleanName.replace(/'/g, "\\'")}', ${cat.id})" style="background:#3d1518; border:1px solid #7d262d; color:#ff6677; font-size:10px; font-weight:700; padding:6px 10px; border-radius:8px; cursor:pointer;">🗑 Xóa mục</button>` 
+                    : '';
+
                 item.innerHTML = `
-                    <div style="display:flex; align-items:center; gap:12px; width:100%;" onclick="chooseCategory('${cat.name}'); closeCategoryModal();">
+                    <div style="display:flex; align-items:center; gap:12px; width:100%;" onclick="chooseCategory('${cleanName.replace(/'/g, "\\'")}'); closeCategoryModal();">
                         <div style="width:38px; height:38px; background:#0d2847; border-radius:10px; display:flex; justify-content:center; align-items:center; color:var(--accent-blue); font-weight:bold;">FF</div>
                         <div style="flex-grow:1;">
-                            <h5 style="margin:0; font-size:13px; font-weight:750; color:white;">${cat.name}</h5>
+                            <h5 style="margin:0; font-size:13px; font-weight:750; color:white;">${cleanName}</h5>
                             <p style="margin:2px 0 0 0; font-size:10px; color:var(--text-sub);">Nhấn để chọn danh mục</p>
                         </div>
-                        <button onclick="event.stopPropagation(); deleteCategoryPrompt('${cat.name}', ${cat.id})" style="background:#3d1518; border:1px solid #7d262d; color:#ff6677; font-size:10px; font-weight:700; padding:6px 10px; border-radius:8px; cursor:pointer;">🗑 Xóa mục</button>
+                        ${deleteBtnHtml}
                     </div>
                 `;
                 listContainer.appendChild(item);
@@ -823,11 +823,11 @@
             if (!confirm(`Bạn có chắc chắn muốn xóa mục [${catName}] không?`)) return;
             try {
                 await adminApi('delete_category', { id: catId }).catch(() => {});
-                categoriesData = categoriesData.filter(c => c.name !== catName);
+                categoriesData = categoriesData.filter(c => c.name.trim() !== catName.trim());
                 renderCategoriesList();
                 closeCategoryModal();
                 tg.showAlert(`Đã xóa mục [${catName}] thành công!`);
-                if (selectedCategory?.name === catName) {
+                if (selectedCategory?.name?.trim() === catName.trim()) {
                     if (categoriesData.length > 0) chooseCategory(categoriesData[0].name);
                     else {
                         document.getElementById('packages-list').innerHTML = '<p class="deposit-desc">Không còn mục sản phẩm nào.</p>';
@@ -853,17 +853,23 @@
             tg.HapticFeedback?.impactOccurred('light');
             let listContainer = document.getElementById('admin-category-items-list');
             listContainer.innerHTML = '';
+            
+            if (!categoriesData || categoriesData.length === 0) {
+                listContainer.innerHTML = '<p class="deposit-desc">Không có danh mục nào để quản lý ảnh.</p>';
+            }
+
             categoriesData.forEach(cat => {
+                let cleanName = String(cat.name || '').trim();
                 let item = document.createElement('div');
                 item.className = 'category-option-item';
                 item.innerHTML = `
-                    <div style="display:flex; align-items:center; gap:12px;">
-                        <div>
-                            <h5 style="margin:0; font-size:13px; font-weight:750; color:white;">${cat.name}</h5>
+                    <div style="display:flex; align-items:center; gap:12px; overflow:hidden;">
+                        <div style="min-width:0;">
+                            <h5 style="margin:0; font-size:13px; font-weight:750; color:white; word-break:break-word;">${cleanName}</h5>
                             <p style="margin:2px 0 0 0; font-size:10px; color:var(--text-sub);">Đổi ảnh danh mục</p>
                         </div>
                     </div>
-                    <button onclick="triggerCategoryFilePicker('${cat.name}')" style="background:#14335c; border:none; color:white; font-size:11px; font-weight:700; padding:8px 12px; border-radius:8px; cursor:pointer;">+ Đổi ảnh</button>
+                    <button onclick="triggerCategoryFilePicker('${cleanName.replace(/'/g, "\\'")}')" style="background:#14335c; border:none; color:white; font-size:11px; font-weight:700; padding:8px 12px; border-radius:8px; cursor:pointer; flex-shrink:0;">+ Đổi ảnh</button>
                 `;
                 listContainer.appendChild(item);
             });
@@ -877,7 +883,7 @@
         function chooseCategory(catName) {
             tg.HapticFeedback?.notificationOccurred('success');
             document.getElementById('selected-cat-name').innerText = catName;
-            selectedCategory = categoriesData.find(c => c.name === catName) || categoriesData[0] || null;
+            selectedCategory = categoriesData.find(c => c.name.trim() === catName.trim()) || categoriesData[0] || null;
             
             selectedOptionId = null;
             selectedOptionObj = null;
@@ -1219,7 +1225,7 @@
         }
 
         function triggerAppFilePicker() { isEditingAppImage = true; activeEditingCatId = null; document.getElementById('file-selector-input').click(); }
-        function triggerCategoryFilePicker(catName) { isEditingAppImage = false; activeEditingCatId = catName; document.getElementById('file-selector-input').click(); }
+        function triggerCategoryFilePicker(catName) { isEditingAppImage = false; activeEditingCatId = String(catName || '').trim(); document.getElementById('file-selector-input').click(); }
 
         async function handleFileSelected(event) {
             let file = event.target.files[0];
