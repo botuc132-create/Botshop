@@ -197,10 +197,10 @@ def init_db():
         )
         DB_POOL.wait(timeout=15)
     statements = [
-        """CREATE TABLE IF NOT EXISTS users (
+        '''CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY, username TEXT, full_name TEXT NOT NULL DEFAULT '',
             balance BIGINT NOT NULL DEFAULT 0, is_locked BOOLEAN NOT NULL DEFAULT FALSE,
-            joined_at TEXT NOT NULL, last_seen TEXT NOT NULL)""",
+            joined_at TEXT NOT NULL, last_seen TEXT NOT NULL)''',
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_deposit_request_at TIMESTAMPTZ",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_seller BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE product_options ADD COLUMN IF NOT EXISTS shophenry_product_id TEXT",
@@ -210,12 +210,12 @@ def init_db():
         "ALTER TABLE categories ADD COLUMN IF NOT EXISTS icon TEXT",
         "CREATE TABLE IF NOT EXISTS bot_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_at TEXT NOT NULL)",
         "INSERT INTO bot_settings(setting_key,setting_value,updated_at) VALUES('maintenance','off',NOW()::text) ON CONFLICT(setting_key) DO NOTHING",
-        """CREATE TABLE IF NOT EXISTS categories (
-            id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_by BIGINT, created_at TEXT NOT NULL)""",
-        """CREATE TABLE IF NOT EXISTS products (
+        '''CREATE TABLE IF NOT EXISTS categories (
+            id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_by BIGINT, created_at TEXT NOT NULL)''',
+        '''CREATE TABLE IF NOT EXISTS products (
             id SERIAL PRIMARY KEY, category_id BIGINT REFERENCES categories(id) ON DELETE CASCADE,
-            name TEXT NOT NULL, created_by BIGINT, created_at TEXT NOT NULL)""",
-        r"""DO $$ BEGIN
+            name TEXT NOT NULL, created_by BIGINT, created_at TEXT NOT NULL)''',
+        '''DO $$ BEGIN
             IF to_regclass('public.product_options') IS NULL THEN
                 EXECUTE format(
                     'CREATE TABLE public.product_options (
@@ -232,25 +232,25 @@ def init_db():
                        AND a.attname = 'id' AND NOT a.attisdropped)
                 );
             END IF;
-        END $$""",
-        """CREATE TABLE IF NOT EXISTS product_keys (
+        END $$''',
+        '''CREATE TABLE IF NOT EXISTS product_keys (
             id BIGSERIAL PRIMARY KEY, option_id BIGINT NOT NULL REFERENCES product_options(id) ON DELETE CASCADE,
             key_value TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'available' CHECK(status IN ('available','sold')),
-            added_by BIGINT, added_at TEXT NOT NULL, sold_to BIGINT, sold_at TEXT)""",
-        """CREATE TABLE IF NOT EXISTS purchases (
+            added_by BIGINT, added_at TEXT NOT NULL, sold_to BIGINT, sold_at TEXT)''',
+        '''CREATE TABLE IF NOT EXISTS purchases (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id),
             category_name TEXT NOT NULL, product_name TEXT NOT NULL, duration_label TEXT NOT NULL,
             quantity INTEGER NOT NULL, unit_price BIGINT NOT NULL, total_price BIGINT NOT NULL,
-            keys_text TEXT NOT NULL, created_at TEXT NOT NULL)""",
-        """CREATE TABLE IF NOT EXISTS deposits (
+            keys_text TEXT NOT NULL, created_at TEXT NOT NULL)''',
+        '''CREATE TABLE IF NOT EXISTS deposits (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id),
-            amount BIGINT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', note TEXT, created_at TEXT NOT NULL)""",
-        """CREATE TABLE IF NOT EXISTS balance_transactions (
+            amount BIGINT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', note TEXT, created_at TEXT NOT NULL)''',
+        '''CREATE TABLE IF NOT EXISTS balance_transactions (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id),
             admin_id BIGINT NOT NULL, action TEXT NOT NULL CHECK(action IN ('add','subtract','deposit')) ,
             amount BIGINT NOT NULL CHECK(amount > 0), balance_after BIGINT NOT NULL,
-            note TEXT, created_at TEXT NOT NULL)""",
-        r"""DO $$ DECLARE r RECORD; BEGIN
+            note TEXT, created_at TEXT NOT NULL)''',
+        '''DO $$ DECLARE r RECORD; BEGIN
             -- Cho phép admin tạo thời hạn tùy ý như 12 giờ hoặc 90 ngày.
             FOR r IN
                 SELECT conname FROM pg_constraint
@@ -260,12 +260,12 @@ def init_db():
             LOOP
                 EXECUTE format('ALTER TABLE public.product_options DROP CONSTRAINT %I', r.conname);
             END LOOP;
-        END $$""",
-        """INSERT INTO product_options(product_id,duration,duration_label,price,sell_price)
+        END $$''',
+        '''INSERT INTO product_options(product_id,duration,duration_label,price,sell_price)
             SELECT p.id, d.duration, d.label, 0, 0
             FROM products p
             CROSS JOIN (VALUES ('7d','7 ngày'),('30d','30 ngày')) AS d(duration,label)
-            ON CONFLICT(product_id,duration) DO NOTHING""",
+            ON CONFLICT(product_id,duration) DO NOTHING''',
         "CREATE INDEX IF NOT EXISTS idx_product_keys_stock ON product_keys(option_id,status)",
         "CREATE INDEX IF NOT EXISTS idx_purchases_user ON purchases(user_id,created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_users_username ON users(LOWER(username))",
@@ -343,8 +343,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stamp = now()
     try:
         with db() as con:
-            con.execute("""INSERT INTO users(user_id,username,full_name,joined_at,last_seen) VALUES(?,?,?,?,?)
-                ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,full_name=EXCLUDED.full_name,last_seen=EXCLUDED.last_seen""",
+            con.execute('''INSERT INTO users(user_id,username,full_name,joined_at,last_seen) VALUES(?,?,?,?,?)
+                ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,full_name=EXCLUDED.full_name,last_seen=EXCLUDED.last_seen''',
                 (user.id, user.username or '', user.full_name or '', stamp, stamp))
             row = con.execute('SELECT balance,is_locked FROM users WHERE user_id=?', (user.id,)).fetchone()
         if row and row['is_locked']:
@@ -1306,17 +1306,17 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if q.message:
                 await q.message.reply_text('⚠️ Phiên làm việc đã hết hạn. Vui lòng bấm /admin để thực hiện lại.', reply_markup=ADMIN_KB)
             return
+        label_fallback = DURATIONS.get(dur, dur)
         with db() as con:
             opt = con.execute('SELECT id,duration_label FROM product_options WHERE product_id::text=?::text AND duration=?', (pid, dur)).fetchone()
             if not opt:
-                label = DURATIONS[dur]
-                cur_ins = con.execute('INSERT INTO product_options(product_id, duration, duration_label, price, sell_price) VALUES (?, ?, ?, 0, 0) RETURNING id', (pid, dur, label))
+                cur_ins = con.execute('INSERT INTO product_options(product_id, duration, duration_label, price, sell_price) VALUES (?, ?, ?, 0, 0) RETURNING id', (pid, dur, label_fallback))
                 opt_id = cur_ins.fetchone()['id']
                 con.commit()
             else:
                 opt_id = opt['id']
         context.user_data.update(flow='add_product_keys', key_option_id=opt_id, key_duration=dur)
-        label = opt['duration_label'] if opt else DURATIONS[dur]
+        label = opt['duration_label'] if opt else label_fallback
         if q.message:
             await q.message.reply_text(f'Gửi danh sách key {label}, mỗi key một dòng:')
     elif data == 'adm:stock':
@@ -1328,11 +1328,11 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pid = int(data.split(':')[2])
         with db() as con:
             product = con.execute('SELECT name,category_id FROM products WHERE id=?', (pid,)).fetchone()
-            rows = con.execute("""SELECT po.id,po.duration_label,po.price,po.sell_price,
+            rows = con.execute('''SELECT po.id,po.duration_label,po.price,po.sell_price,
                 COUNT(pk.id) FILTER (WHERE pk.status='available') AS available,
                 COUNT(pk.id) AS total
                 FROM product_options po LEFT JOIN product_keys pk ON pk.option_id=po.id
-                WHERE po.product_id=? GROUP BY po.id ORDER BY po.id""", (pid,)).fetchall()
+                WHERE po.product_id=? GROUP BY po.id ORDER BY po.id''', (pid,)).fetchall()
         if not product:
             await q.edit_message_text('Sản phẩm không còn tồn tại.', reply_markup=inline_back('adm:stock'))
             return
@@ -1346,14 +1346,14 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('adm:stockopt:'):
         oid = int(data.split(':')[2])
         with db() as con:
-            row = con.execute("""SELECT po.id,po.product_id,po.duration_label,po.price,po.sell_price,
+            row = con.execute('''SELECT po.id,po.product_id,po.duration_label,po.price,po.sell_price,
                 p.name AS product_name,
                 COUNT(pk.id) FILTER (WHERE pk.status='available') AS available,
                 COUNT(pk.id) FILTER (WHERE pk.status='sold') AS sold,
                 COUNT(pk.id) AS total
                 FROM product_options po JOIN products p ON p.id=po.product_id
                 LEFT JOIN product_keys pk ON pk.option_id=po.id
-                WHERE po.id=? GROUP BY po.id,p.name""", (oid,)).fetchone()
+                WHERE po.id=? GROUP BY po.id,p.name''', (oid,)).fetchone()
         if not row:
             await q.edit_message_text('Gói thời hạn không còn tồn tại.', reply_markup=inline_back('adm:stock'))
             return
@@ -1571,9 +1571,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
         
         if photo_file_id:
-            await msg.reply_photo(photo=photo_file_id, caption=f"📢 **XEM TRƯỚC THÔNG BÁO:**\n\n{bc_text}", parse_mode='HTML', reply_markup=preview_kb)
+            await msg.reply_photo(photo=photo_file_id, caption=f"📢 <b>XEM TRƯỚC THÔNG BÁO:</b>\n\n{bc_text}", parse_mode='HTML', reply_markup=preview_kb)
         else:
-            await msg.reply_text(f"📢 **XEM TRƯỚC THÔNG BÁO:**\n\n{bc_text}", parse_mode='HTML', reply_markup=preview_kb)
+            await msg.reply_text(f"📢 <b>XEM TRƯỚC THÔNG BÁO:</b>\n\n{bc_text}", parse_mode='HTML', reply_markup=preview_kb)
         return
 
     if flow == 'custom_quantity':
@@ -1761,8 +1761,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             stock = con.execute("SELECT COUNT(*) AS n FROM product_keys WHERE option_id=? AND status='available'", (oid,)).fetchone()['n']
         context.user_data.clear()
         await msg.reply_text(f'✅ Đã thêm {added}/{len(keys)} key thành công. Kho hiện có: {stock} key.', reply_markup=ADMIN_KB)
-        if added:
-            announcement = (f"🔥 CÓ HÀNG MỚI VỀ! 🔥\n━━━━━━━━━━━━━━━━━━\n📁 Danh mục: {info['category_name']}\n🎮 Sản phẩm: {info['duration_label']}\n🔢 Số lượng: {added} sản phẩm đã được cập nhật!\n\n👉 Nhấn nút bên dưới để mở Mini App và mua ngay!")
+        if added and info:
+            announcement = (f"🔥 CÓ HÀNG MỚI VỀ! 🔥\n━━━━━━━━━━━━━━━━━━\n📁 Danh mục: {escape(info['category_name'])}\n🎮 Sản phẩm: {escape(info['duration_label'])}\n🔢 Số lượng: {added} sản phẩm đã được cập nhật!\n\n👉 Nhấn nút bên dưới để mở Mini App và mua ngay!")
             shop_markup = InlineKeyboardMarkup([[InlineKeyboardButton('🚀 MỞ MINI APP', web_app=WebAppInfo(url=MINI_APP_URL))]]) if MINI_APP_URL.startswith('https://') else None
             sent = await broadcast(context.bot, announcement, reply_markup=shop_markup)
             await msg.reply_text(f'📢 Đã thông báo tới {sent} người dùng.')
@@ -1876,11 +1876,14 @@ def _mini_user(request: Request, require_admin=False):
 
 @web_app.get('/')
 async def miniapp_index():
-    html_path = BASE_DIR / 'index.html'
-    if not html_path.exists():
-        html_path = BASE_DIR / 'index(3).html'
-    if not html_path.exists():
-        raise HTTPException(status_code=404, detail='Không tìm thấy index.html hoặc index(3).html')
+    html_path = None
+    for candidate in ('index.html', 'index (8).html', 'index(8).html', 'index(3).html'):
+        p = BASE_DIR / candidate
+        if p.exists():
+            html_path = p
+            break
+    if html_path is None:
+        raise HTTPException(status_code=404, detail='Không tìm thấy index.html')
     return FileResponse(
         html_path,
         media_type='text/html; charset=utf-8',
@@ -1942,11 +1945,82 @@ def api_catalog(request: Request):
 async def api_purchase(request: Request):
     user = _mini_user(request)
     payload = await request.json()
+    raw_oid = str(payload.get('option_id') or '').strip()
+    is_direct_sh = raw_oid.startswith('sh_') or bool(payload.get('shophenry_product_id') and payload.get('keys_text'))
     try:
-        oid=int(payload.get('option_id')); qty=int(payload.get('quantity'))
-        if qty < 1 or qty > 100: raise ValueError()
+        qty = int(payload.get('quantity'))
+        if qty < 1 or qty > 100:
+            raise ValueError()
+        oid = None if is_direct_sh else int(raw_oid)
     except Exception:
         raise HTTPException(status_code=400, detail='Số lượng hoặc gói sản phẩm không hợp lệ.')
+
+    # Trường hợp Mini App đã gọi trực tiếp ShopHenry API và gửi kết quả về để trừ số dư & lưu lịch sử
+    if is_direct_sh:
+        try:
+            unit_price = max(0, int(payload.get('unit_price') or 0))
+            total = max(0, int(payload.get('total_price') or (unit_price * qty)))
+        except Exception:
+            raise HTTPException(status_code=400, detail='Giá đơn hàng không hợp lệ.')
+        category_name = str(payload.get('category_name') or 'Free Fire').strip()[:80]
+        product_name = str(payload.get('product_name') or 'Sản phẩm').strip()[:120]
+        duration_label = str(payload.get('duration_label') or '').strip()[:40]
+        key_text = str(payload.get('keys_text') or '').strip()
+        sh_pid = str(payload.get('shophenry_product_id') or raw_oid.replace('sh_', '', 1)).strip()
+        if not key_text:
+            raise HTTPException(status_code=400, detail='Thiếu dữ liệu key từ ShopHenry.')
+        con = db()
+        try:
+            con.execute('BEGIN')
+            u = con.execute('SELECT balance,is_locked FROM users WHERE user_id=? FOR UPDATE', (user['id'],)).fetchone()
+            if not u or u['is_locked']:
+                raise HTTPException(status_code=403, detail='Tài khoản không thể mua hàng.')
+            if u['balance'] < total:
+                raise HTTPException(status_code=400, detail=f'Số dư không đủ. Cần {total:,}đ, hiện có {u["balance"]:,}đ.')
+            con.execute('UPDATE users SET balance=balance-? WHERE user_id=?', (total, user['id']))
+            purchase_row = con.execute(
+                '''INSERT INTO purchases(user_id,category_name,product_name,duration_label,quantity,unit_price,total_price,keys_text,created_at,supplier_order_code)
+                   VALUES(?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+                (user['id'], category_name, product_name, duration_label, qty, unit_price, total, key_text, now(), f'SH-{sh_pid}' if sh_pid else None)
+            ).fetchone()
+            purchase_id = int(purchase_row['id'])
+            con.commit()
+        except HTTPException:
+            con.rollback()
+            raise
+        except Exception:
+            con.rollback()
+            log.exception('Mini App direct ShopHenry record failed')
+            raise HTTPException(status_code=500, detail='Không thể lưu lịch sử đơn hàng.')
+        finally:
+            con.close()
+
+        guide_url = None
+        try:
+            with db() as guide_con:
+                guide_row = guide_con.execute('SELECT guide_url FROM categories WHERE LOWER(name)=LOWER(?) LIMIT 1', (category_name,)).fetchone()
+                guide_url = guide_row['guide_url'] if guide_row else None
+            telegram_text = (
+                "🎉 MUA HÀNG THÀNH CÔNG! 🎉\n\n"
+                f"🎮 Game: {escape(category_name)}\n📦 Sản phẩm: {escape(product_name)}{(' - ' + escape(duration_label)) if duration_label else ''}\n"
+                f"🔢 Số lượng: {qty}\n💰 Tổng tiền: {total:,}đ\n\n🔑 KEY CỦA BẠN:\n<pre>{escape(key_text)}</pre>"
+            )
+            await asyncio.to_thread(
+                _telegram_http,
+                'sendMessage',
+                {'chat_id': user['id'], 'text': telegram_text, 'parse_mode': 'HTML'},
+            )
+        except Exception:
+            log.exception('Could not send purchased keys to Telegram user %s', user['id'])
+
+        return {
+            'success': True, 'purchase_id': purchase_id, 'total': total, 'total_price': total,
+            'keys_text': key_text, 'category_name': category_name, 'product_name': product_name,
+            'duration_label': duration_label, 'quantity': qty, 'guide_url': guide_url,
+            'message': 'Mua hàng thành công.'
+        }
+
+    # Trường hợp mua gói sản phẩm nội bộ hoặc gói gán ShopHenry qua backend
     supplier_order=''; key_text=''; con=db()
     try:
         con.execute('BEGIN')
@@ -1994,7 +2068,7 @@ async def api_purchase(request: Request):
             guide_url = guide_row['guide_url'] if guide_row else None
         telegram_text = (
             "🎉 MUA HÀNG THÀNH CÔNG! 🎉\n\n"
-            f"🎮 Game: {opt['category_name']}\n📦 Sản phẩm: {opt['product_name']} - {opt['duration_label']}\n"
+            f"🎮 Game: {escape(opt['category_name'])}\n📦 Sản phẩm: {escape(opt['product_name'])} - {escape(opt['duration_label'])}\n"
             f"🔢 Số lượng: {qty}\n💰 Tổng tiền: {total:,}đ\n\n🔑 KEY CỦA BẠN:\n<pre>{escape(key_text)}</pre>"
         )
         await asyncio.to_thread(
@@ -2017,13 +2091,10 @@ async def api_create_deposit(request: Request):
     except Exception: raise HTTPException(status_code=400,detail='Số tiền không hợp lệ.')
     if amount<2000 or amount>1000000000: raise HTTPException(status_code=400,detail='Số tiền nạp từ 2.000đ đến 1.000.000.000đ.')
     with db() as con:
-        # Lock this user's row so two rapid taps cannot create duplicate deposits.
         con.execute('SELECT user_id FROM users WHERE user_id=? FOR UPDATE',(user['id'],)).fetchone()
-        # Expire old unpaid QR requests. A new amount must never silently reuse
-        # a QR containing the previous amount or transfer memo.
-        con.execute("""UPDATE deposits SET status='expired'
+        con.execute('''UPDATE deposits SET status='expired'
             WHERE user_id=? AND status='pending'
-              AND created_at::timestamptz < NOW() - INTERVAL '5 minutes'""",(user['id'],))
+              AND created_at::timestamptz < NOW() - INTERVAL '5 minutes' ''',(user['id'],))
         recent=con.execute("SELECT id,status,amount,note,created_at FROM deposits WHERE user_id=? AND status IN ('pending','submitted') ORDER BY id DESC LIMIT 1",(user['id'],)).fetchone()
         if recent and int(recent['amount']) == amount:
             did=int(recent['id']); memo=str(recent['note'] or '')
@@ -2040,8 +2111,6 @@ async def api_create_deposit(request: Request):
                     'expires_in':remaining,'status':recent['status'],
                     'message':('Đơn nạp này đang chờ Admin duyệt.' if recent['status']=='submitted'
                                else 'Đang hiển thị lại mã QR của đơn này.')}
-        # If the user changed the amount, retire only the previous unpaid QR.
-        # Submitted requests remain in the review queue and are never auto-approved.
         if recent and recent['status']=='pending':
             con.execute("UPDATE deposits SET status='expired' WHERE id=? AND status='pending'",(recent['id'],))
         row=con.execute("INSERT INTO deposits(user_id,amount,status,note,created_at) VALUES(?,?,'pending','',?) RETURNING id",(user['id'],amount,now())).fetchone()
@@ -2086,12 +2155,11 @@ async def api_admin_overview(request: Request):
 
 
 def _extract_shophenry_catalog(payload):
-    """Accept the common seller API response envelopes without assuming data is a list."""
+    '''Accept the common seller API response envelopes without assuming data is a list.'''
     if isinstance(payload, list):
         return [x for x in payload if isinstance(x, dict)]
     if not isinstance(payload, dict):
         return []
-    # Prefer explicit product/category collections before descending into data.
     for key in ('products', 'items', 'list', 'categories'):
         value = payload.get(key)
         if isinstance(value, list):
@@ -2203,7 +2271,6 @@ async def api_admin_action(request: Request):
                                 supplier_price=max(0,int(float(option.get('price') or 0)))
                             except (TypeError,ValueError):
                                 supplier_price=0
-                            # Mỗi mã sản phẩm ShopHenry là một gói riêng; giữ nguyên giá Sell do admin đã chỉnh.
                             existing=con.execute(
                                 'SELECT id FROM product_options WHERE shophenry_product_id=? ORDER BY id LIMIT 1',
                                 (supplier_id,)
@@ -2227,16 +2294,23 @@ async def api_admin_action(request: Request):
                 if not image_data.startswith('data:image/') or len(image_data)>2_500_000:
                     raise HTTPException(status_code=400,detail='Ảnh không hợp lệ hoặc vượt quá dung lượng cho phép.')
                 stamp = now()
-                con.execute("""INSERT INTO bot_settings(setting_key,setting_value,updated_at) VALUES('miniapp_ff_icon',?,?)
-                    ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=EXCLUDED.updated_at""",
+                con.execute('''INSERT INTO bot_settings(setting_key,setting_value,updated_at) VALUES('miniapp_ff_icon',?,?)
+                    ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=EXCLUDED.updated_at''',
                     (image_data,stamp))
                 return {'success':True,'message':'Đã lưu ảnh Free Fire. Ảnh sẽ hiển thị cho tất cả người dùng.'}
             if action=='set_category_icon':
                 category_id=int(data.get('category_id') or 0)
+                category_name=str(data.get('category_name') or '').strip()
                 image_data=str(data.get('image_data') or '')
                 if not image_data.startswith('data:image/') or len(image_data)>2_500_000:
                     raise HTTPException(status_code=400,detail='Ảnh không hợp lệ hoặc vượt quá dung lượng cho phép.')
-                row=con.execute('UPDATE categories SET icon=? WHERE id=? RETURNING id',(image_data,category_id)).fetchone()
+                row = None
+                if category_id:
+                    row=con.execute('UPDATE categories SET icon=? WHERE id=? RETURNING id',(image_data,category_id)).fetchone()
+                elif category_name:
+                    row=con.execute('UPDATE categories SET icon=? WHERE LOWER(name)=LOWER(?) RETURNING id',(image_data,category_name)).fetchone()
+                    if not row:
+                        row=con.execute('INSERT INTO categories(name,created_by,created_at,icon) VALUES(?,?,?,?) RETURNING id',(category_name,admin['id'],now(),image_data)).fetchone()
                 if not row: raise HTTPException(status_code=404,detail='Không tìm thấy danh mục cần cập nhật ảnh.')
                 return {'success':True,'message':'Đã lưu ảnh danh mục. Ảnh sẽ hiển thị cho tất cả người dùng.'}
             if action=='stats':
@@ -2395,7 +2469,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(configure_miniapp_menu_button).build()
     telegram_application = app
     app.add_handler(CommandHandler('start', start)); app.add_handler(CommandHandler('admin', admin_cmd))
-    app.add_handler(CallbackQueryHandler(callback)); app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO & ~filters.COMMAND, text_handler))
+    app.add_handler(CallbackQueryHandler(callback)); app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, text_handler))
     app.add_error_handler(error_handler)
     port = int(os.getenv('PORT', '3000'))
     web_thread = threading.Thread(target=lambda: uvicorn.run(web_app, host='0.0.0.0', port=port, log_level='info'), daemon=True)

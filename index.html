@@ -297,7 +297,7 @@
 
                 <div class="section-header">Chọn gói sản phẩm</div>
                 
-                <div id="packages-list"><p class="deposit-desc">Đang tải sản phẩm chuẩn giá người thường từ ShopHenry API...</p></div>
+                <div id="packages-list"><p class="deposit-desc">Đang tải sản phẩm chuẩn giá từ ShopHenry API...</p></div>
 
                 <div class="checkout-box" id="checkout-box">
                     <div class="checkout-row">
@@ -498,7 +498,6 @@
         const SHOPHENRY_API_URL = "https://shophenry.io.vn/api/seller.php";
         const SHOPHENRY_TOKEN = "sk_live_3f0cefe3182f2c54895460ae01a13351";
 
-        // BẢNG GIÁ CHUẨN NGƯỜI THƯỜNG CỐ ĐỊNH THEO ẢNH BẠN GỬI
         const FIXED_NORMAL_PRICES = {
             "AIM LAG ADR + IOS": { "1 Giờ": 5000, "1 Ngày": 40000, "7 Ngày": 100000, "30 Ngày": 150000 },
             "DRIP CLIENT WIRE": { "6 Giờ": 26000, "12 Giờ": 35000, "1 Ngày": 50000, "7 Ngày": 120000 },
@@ -711,11 +710,8 @@
                                 name: pName,
                                 options: (p.options || [p]).map(opt => {
                                     const dur = String(opt.duration || opt.duration_label || opt.name || '1 Ngày').trim();
-                                    
-                                    // GÁN CỐ ĐỊNH GIÁ NGƯỜI THƯỜNG TỪ BẢNG CỐ ĐỊNH NẾU CÓ, NẾU KHÔNG LẤY TỪ API
                                     let fixedPrice = FIXED_NORMAL_PRICES[pName]?.[dur];
                                     if (!fixedPrice) {
-                                        // Tìm kiếm không phân biệt hoa thường
                                         const foundKey = Object.keys(FIXED_NORMAL_PRICES).find(k => k.toLowerCase() === pName.toLowerCase());
                                         if (foundKey) fixedPrice = FIXED_NORMAL_PRICES[foundKey][dur];
                                     }
