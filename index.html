@@ -297,7 +297,7 @@
 
                 <div class="section-header">Chọn gói sản phẩm</div>
                 
-                <div id="packages-list"><p class="deposit-desc">Đang tải sản phẩm chuẩn giá người thường từ ShopHenry API...</p></div>
+                <div id="packages-list"><p class="deposit-desc">Đang tải sản phẩm chuẩn giá từ ShopHenry API...</p></div>
 
                 <div class="checkout-box" id="checkout-box">
                     <div class="checkout-row">
@@ -498,16 +498,6 @@
         const SHOPHENRY_API_URL = "https://shophenry.io.vn/api/seller.php";
         const SHOPHENRY_TOKEN = "sk_live_3f0cefe3182f2c54895460ae01a13351";
 
-        // BẢNG GIÁ CHUẨN NGƯỜI THƯỜNG CỐ ĐỊNH THEO ẢNH BẠN GỬI
-        const FIXED_NORMAL_PRICES = {
-            "AIM LAG ADR + IOS": { "1 Giờ": 5000, "1 Ngày": 40000, "7 Ngày": 100000, "30 Ngày": 150000 },
-            "DRIP CLIENT WIRE": { "6 Giờ": 26000, "12 Giờ": 35000, "1 Ngày": 50000, "7 Ngày": 120000 },
-            "MIGUL LITE": { "1 Ngày": 50000, "7 Ngày": 150000, "30 Ngày": 350000 },
-            "Delta Client": { "1 Ngày": 50000, "7 Ngày": 50000, "30 Ngày": 99000, "90 Ngày": 230000 },
-            "SOPHIA": { "1 Ngày": 50000, "7 Ngày": 80000, "30 Ngày": 100000 },
-            "BR MODS PC KHÔNG BYPASS": { "1 Day": 30000, "10 Ngày": 119000, "30 Ngày": 169000 }
-        };
-
         let activeDeposit = null;
         let balanceRefreshInterval = null;
         let currentUserBalance = 0;
@@ -519,6 +509,7 @@
         let selectedPkgName = '';
         let selectedPkgPrice = 0;
         let activeEditingCatId = null;
+        let activeEditingCatName = null;
         let isEditingAppImage = false;
         let countdownInterval = null;
         let depositSubmitBusy = false;
@@ -700,60 +691,45 @@
 
             rawItems.forEach((item, index) => {
                 if (Array.isArray(item.products)) {
+                    const catId = item.id || autoCatId++;
                     const catName = String(item.name || item.category_name || 'Free Fire').trim();
                     catGroups.set(catName, {
-                        id: item.id || autoCatId++,
+                        id: catId,
                         name: catName,
-                        products: item.products.map((p, pIdx) => {
-                            const pName = String(p.name || p.title || 'Sản phẩm').trim();
-                            return {
-                                id: p.id || (index * 100 + pIdx + 1),
-                                name: pName,
-                                options: (p.options || [p]).map(opt => {
-                                    const dur = String(opt.duration || opt.duration_label || opt.name || '1 Ngày').trim();
-                                    
-                                    // GÁN CỐ ĐỊNH GIÁ NGƯỜI THƯỜNG TỪ BẢNG CỐ ĐỊNH NẾU CÓ, NẾU KHÔNG LẤY TỪ API
-                                    let fixedPrice = FIXED_NORMAL_PRICES[pName]?.[dur];
-                                    if (!fixedPrice) {
-                                        // Tìm kiếm không phân biệt hoa thường
-                                        const foundKey = Object.keys(FIXED_NORMAL_PRICES).find(k => k.toLowerCase() === pName.toLowerCase());
-                                        if (foundKey) fixedPrice = FIXED_NORMAL_PRICES[foundKey][dur];
-                                    }
-                                    const normalPrice = fixedPrice || Number(opt.price || opt.retail_price || opt.original_price || 0);
+                        products: item.products.map((p, pIdx) => ({
+                            id: p.id || (index * 100 + pIdx + 1),
+                            name: p.name || p.title || 'Sản phẩm',
+                            options: (p.options || [p]).map(opt => {
+                                const normalPrice = Number(opt.price || opt.retail_price || opt.original_price || opt.sell_price || 0);
 
-                                    return {
-                                        id: 'sh_' + String(opt.id || opt.product_id || index),
-                                        shophenry_id: String(opt.id || opt.product_id || index),
-                                        duration: dur,
-                                        duration_label: dur,
-                                        price: normalPrice,
-                                        stock: Number(opt.stock ?? opt.quantity ?? opt.available ?? 10),
-                                        shophenry: true
-                                    };
-                                })
-                            };
-                        })
+                                return {
+                                    id: 'sh_' + String(opt.id || opt.product_id || index),
+                                    shophenry_id: String(opt.id || opt.product_id || index),
+                                    duration: opt.duration || opt.duration_label || opt.name || '1 Ngày',
+                                    duration_label: opt.duration_label || opt.duration || opt.name || '1 Ngày',
+                                    price: normalPrice,
+                                    stock: Number(opt.stock ?? opt.quantity ?? opt.available ?? 10),
+                                    shophenry: true
+                                };
+                            })
+                        }))
                     });
                     return;
                 }
 
                 const catName = String(item.category || item.category_name || 'Free Fire').trim();
+                const catId = item.category_id || autoCatId++;
                 const fullName = String(item.name || item.title || 'Gói sản phẩm').trim();
                 const parts = fullName.split('-').map(s => s.trim());
                 const prodName = parts.length > 1 ? parts[0] : fullName;
-                const durLabel = String(item.duration_label || item.duration || (parts.length > 1 ? parts.slice(1).join(' - ') : '1 Ngày')).trim();
+                const durLabel = item.duration_label || item.duration || (parts.length > 1 ? parts.slice(1).join(' - ') : '1 Ngày');
                 const shId = String(item.id || item.product_id || index);
 
-                let fixedPrice = FIXED_NORMAL_PRICES[prodName]?.[durLabel];
-                if (!fixedPrice) {
-                    const foundKey = Object.keys(FIXED_NORMAL_PRICES).find(k => k.toLowerCase() === prodName.toLowerCase());
-                    if (foundKey) fixedPrice = FIXED_NORMAL_PRICES[foundKey][durLabel];
-                }
-                const normalPrice = fixedPrice || Number(item.price || item.retail_price || item.original_price || 0);
+                const normalPrice = Number(item.price || item.retail_price || item.original_price || item.sell_price || 0);
 
                 if (!catGroups.has(catName)) {
                     catGroups.set(catName, {
-                        id: autoCatId++,
+                        id: catId,
                         name: catName,
                         _prodMap: new Map()
                     });
@@ -812,12 +788,9 @@
                     products: [
                         {
                             id: 1,
-                            name: 'AIM LAG ADR + IOS',
+                            name: 'Free Fire VIP Tool',
                             options: [
-                                { id: 'sh_1', shophenry_id: '1', duration: '1 Giờ', duration_label: '1 Giờ', price: 5000, stock: 169, shophenry: true },
-                                { id: 'sh_2', shophenry_id: '2', duration: '1 Ngày', duration_label: '1 Ngày', price: 40000, stock: 14, shophenry: true },
-                                { id: 'sh_3', shophenry_id: '3', duration: '7 Ngày', duration_label: '7 Ngày', price: 100000, stock: 9, shophenry: true },
-                                { id: 'sh_4', shophenry_id: '4', duration: '30 Ngày', duration_label: '30 Ngày', price: 150000, stock: 7, shophenry: true }
+                                { id: 'sh_1', shophenry_id: '1', duration: '1 Ngày', duration_label: '1 Ngày', price: 50000, stock: 99, shophenry: true }
                             ]
                         }
                     ]
@@ -863,12 +836,17 @@
         async function deleteCategoryPrompt(catName, catId) {
             if (!confirm(`Bạn có chắc chắn muốn xóa mục [${catName}] không?`)) return;
             try {
-                await adminApi('delete_category', { id: catId }).catch(() => {});
-                categoriesData = categoriesData.filter(c => c.name.trim() !== catName.trim());
+                await apiRequest('/api/admin/action', {
+                    method: 'POST',
+                    body: JSON.stringify({ action: 'delete_category', id: catId })
+                });
+
+                categoriesData = categoriesData.filter(c => c.id !== catId && c.name.trim() !== catName.trim());
                 renderCategoriesList();
                 closeCategoryModal();
                 tg.showAlert(`Đã xóa mục [${catName}] thành công!`);
-                if (selectedCategory?.name?.trim() === catName.trim()) {
+                
+                if (selectedCategory?.id === catId || selectedCategory?.name?.trim() === catName.trim()) {
                     if (categoriesData.length > 0) chooseCategory(categoriesData[0].name);
                     else {
                         document.getElementById('packages-list').innerHTML = '<p class="deposit-desc">Không còn mục sản phẩm nào.</p>';
@@ -901,6 +879,7 @@
 
             categoriesData.forEach(cat => {
                 let cleanName = String(cat.name || '').trim();
+                let catId = cat.id || 0;
                 let item = document.createElement('div');
                 item.className = 'category-option-item';
                 item.innerHTML = `
@@ -910,7 +889,7 @@
                             <p style="margin:2px 0 0 0; font-size:10px; color:var(--text-sub);">Đổi ảnh danh mục</p>
                         </div>
                     </div>
-                    <button onclick="triggerCategoryFilePicker('${cleanName.replace(/'/g, "\\'")}')" style="background:#14335c; border:none; color:white; font-size:11px; font-weight:700; padding:8px 12px; border-radius:8px; cursor:pointer; flex-shrink:0;">+ Đổi ảnh</button>
+                    <button onclick="triggerCategoryFilePicker(${catId}, '${cleanName.replace(/'/g, "\\'")}')" style="background:#14335c; border:none; color:white; font-size:11px; font-weight:700; padding:8px 12px; border-radius:8px; cursor:pointer; flex-shrink:0;">+ Đổi ảnh</button>
                 `;
                 listContainer.appendChild(item);
             });
@@ -1266,7 +1245,7 @@
         }
 
         function triggerAppFilePicker() { isEditingAppImage = true; activeEditingCatId = null; document.getElementById('file-selector-input').click(); }
-        function triggerCategoryFilePicker(catName) { isEditingAppImage = false; activeEditingCatId = String(catName || '').trim(); document.getElementById('file-selector-input').click(); }
+        function triggerCategoryFilePicker(catId, catName) { isEditingAppImage = false; activeEditingCatId = Number(catId); activeEditingCatName = String(catName || '').trim(); document.getElementById('file-selector-input').click(); }
 
         async function handleFileSelected(event) {
             let file = event.target.files[0];
@@ -1282,8 +1261,8 @@
                         } catch (err) { tg.showAlert('Lỗi: ' + err.message); }
                     } else if (activeEditingCatId !== null) {
                         try {
-                            await adminApi('set_category_icon', {category_name: activeEditingCatId, image_data: imageUrl});
-                            tg.showAlert(`Đã đổi ảnh cho mục "${activeEditingCatId}" thành công!`);
+                            await adminApi('set_category_icon', {category_id: activeEditingCatId, category_name: activeEditingCatName, image_data: imageUrl});
+                            tg.showAlert(`Đã đổi ảnh cho mục thành công!`);
                         } catch (err) { tg.showAlert('Lỗi đổi ảnh mục: ' + err.message); }
                     }
                 };
