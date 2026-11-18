@@ -498,6 +498,16 @@
         const SHOPHENRY_API_URL = "https://shophenry.io.vn/api/seller.php";
         const SHOPHENRY_TOKEN = "sk_live_3f0cefe3182f2c54895460ae01a13351";
 
+        // BẢNG GIÁ CHUẨN NGƯỜI THƯỜNG CỐ ĐỊNH THEO ẢNH BẠN GỬI
+        const FIXED_NORMAL_PRICES = {
+            "AIM LAG ADR + IOS": { "1 Giờ": 5000, "1 Ngày": 40000, "7 Ngày": 100000, "30 Ngày": 150000 },
+            "DRIP CLIENT WIRE": { "6 Giờ": 26000, "12 Giờ": 35000, "1 Ngày": 50000, "7 Ngày": 120000 },
+            "MIGUL LITE": { "1 Ngày": 50000, "7 Ngày": 150000, "30 Ngày": 350000 },
+            "Delta Client": { "1 Ngày": 50000, "7 Ngày": 50000, "30 Ngày": 99000, "90 Ngày": 230000 },
+            "SOPHIA": { "1 Ngày": 50000, "7 Ngày": 80000, "30 Ngày": 100000 },
+            "BR MODS PC KHÔNG BYPASS": { "1 Day": 30000, "10 Ngày": 119000, "30 Ngày": 169000 }
+        };
+
         let activeDeposit = null;
         let balanceRefreshInterval = null;
         let currentUserBalance = 0;
@@ -694,26 +704,35 @@
                     catGroups.set(catName, {
                         id: item.id || autoCatId++,
                         name: catName,
-                        products: item.products.map((p, pIdx) => ({
-                            id: p.id || (index * 100 + pIdx + 1),
-                            name: p.name || p.title || 'Sản phẩm',
-                            options: (p.options || [p]).map(opt => {
-                                // LUÔN ƯU TIÊN LẤY GIÁ NGƯỜI DÙNG THƯỜNG (Giá gốc chưa giảm / không lấy sell_price nếu nhỏ hơn)
-                                const normalPrice = Number(opt.price || opt.retail_price || opt.original_price || opt.sell_price || 0);
-                                const altSellPrice = Number(opt.sell_price || opt.member_price || 0);
-                                const standardPrice = (altSellPrice > 0 && altSellPrice > normalPrice) ? altSellPrice : (normalPrice || altSellPrice);
+                        products: item.products.map((p, pIdx) => {
+                            const pName = String(p.name || p.title || 'Sản phẩm').trim();
+                            return {
+                                id: p.id || (index * 100 + pIdx + 1),
+                                name: pName,
+                                options: (p.options || [p]).map(opt => {
+                                    const dur = String(opt.duration || opt.duration_label || opt.name || '1 Ngày').trim();
+                                    
+                                    // GÁN CỐ ĐỊNH GIÁ NGƯỜI THƯỜNG TỪ BẢNG CỐ ĐỊNH NẾU CÓ, NẾU KHÔNG LẤY TỪ API
+                                    let fixedPrice = FIXED_NORMAL_PRICES[pName]?.[dur];
+                                    if (!fixedPrice) {
+                                        // Tìm kiếm không phân biệt hoa thường
+                                        const foundKey = Object.keys(FIXED_NORMAL_PRICES).find(k => k.toLowerCase() === pName.toLowerCase());
+                                        if (foundKey) fixedPrice = FIXED_NORMAL_PRICES[foundKey][dur];
+                                    }
+                                    const normalPrice = fixedPrice || Number(opt.price || opt.retail_price || opt.original_price || 0);
 
-                                return {
-                                    id: 'sh_' + String(opt.id || opt.product_id || index),
-                                    shophenry_id: String(opt.id || opt.product_id || index),
-                                    duration: opt.duration || opt.duration_label || opt.name || '1 Ngày',
-                                    duration_label: opt.duration_label || opt.duration || opt.name || '1 Ngày',
-                                    price: standardPrice,
-                                    stock: Number(opt.stock ?? opt.quantity ?? opt.available ?? 10),
-                                    shophenry: true
-                                };
-                            })
-                        }))
+                                    return {
+                                        id: 'sh_' + String(opt.id || opt.product_id || index),
+                                        shophenry_id: String(opt.id || opt.product_id || index),
+                                        duration: dur,
+                                        duration_label: dur,
+                                        price: normalPrice,
+                                        stock: Number(opt.stock ?? opt.quantity ?? opt.available ?? 10),
+                                        shophenry: true
+                                    };
+                                })
+                            };
+                        })
                     });
                     return;
                 }
@@ -722,12 +741,15 @@
                 const fullName = String(item.name || item.title || 'Gói sản phẩm').trim();
                 const parts = fullName.split('-').map(s => s.trim());
                 const prodName = parts.length > 1 ? parts[0] : fullName;
-                const durLabel = item.duration_label || item.duration || (parts.length > 1 ? parts.slice(1).join(' - ') : '1 Ngày');
+                const durLabel = String(item.duration_label || item.duration || (parts.length > 1 ? parts.slice(1).join(' - ') : '1 Ngày')).trim();
                 const shId = String(item.id || item.product_id || index);
 
-                const normalPrice = Number(item.price || item.retail_price || item.original_price || item.sell_price || 0);
-                const altSellPrice = Number(item.sell_price || item.member_price || 0);
-                const standardPrice = (altSellPrice > 0 && altSellPrice > normalPrice) ? altSellPrice : (normalPrice || altSellPrice);
+                let fixedPrice = FIXED_NORMAL_PRICES[prodName]?.[durLabel];
+                if (!fixedPrice) {
+                    const foundKey = Object.keys(FIXED_NORMAL_PRICES).find(k => k.toLowerCase() === prodName.toLowerCase());
+                    if (foundKey) fixedPrice = FIXED_NORMAL_PRICES[foundKey][durLabel];
+                }
+                const normalPrice = fixedPrice || Number(item.price || item.retail_price || item.original_price || 0);
 
                 if (!catGroups.has(catName)) {
                     catGroups.set(catName, {
@@ -751,7 +773,7 @@
                     shophenry_id: shId,
                     duration: durLabel,
                     duration_label: durLabel,
-                    price: standardPrice,
+                    price: normalPrice,
                     stock: Number(item.stock ?? item.quantity ?? item.available ?? 10),
                     shophenry: true
                 });
@@ -790,10 +812,12 @@
                     products: [
                         {
                             id: 1,
-                            name: 'Free Fire VIP Tool',
+                            name: 'AIM LAG ADR + IOS',
                             options: [
-                                { id: 'sh_1', shophenry_id: '1', duration: '1 Ngày', duration_label: '1 Ngày', price: 20000, stock: 99, shophenry: true },
-                                { id: 'sh_2', shophenry_id: '2', duration: '7 Ngày', duration_label: '7 Ngày', price: 100000, stock: 99, shophenry: true }
+                                { id: 'sh_1', shophenry_id: '1', duration: '1 Giờ', duration_label: '1 Giờ', price: 5000, stock: 169, shophenry: true },
+                                { id: 'sh_2', shophenry_id: '2', duration: '1 Ngày', duration_label: '1 Ngày', price: 40000, stock: 14, shophenry: true },
+                                { id: 'sh_3', shophenry_id: '3', duration: '7 Ngày', duration_label: '7 Ngày', price: 100000, stock: 9, shophenry: true },
+                                { id: 'sh_4', shophenry_id: '4', duration: '30 Ngày', duration_label: '30 Ngày', price: 150000, stock: 7, shophenry: true }
                             ]
                         }
                     ]
