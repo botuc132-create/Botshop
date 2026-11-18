@@ -509,7 +509,6 @@
         let selectedPkgName = '';
         let selectedPkgPrice = 0;
         let activeEditingCatId = null;
-        let activeEditingCatName = null;
         let isEditingAppImage = false;
         let countdownInterval = null;
         let depositSubmitBusy = false;
@@ -700,6 +699,7 @@
                             id: p.id || (index * 100 + pIdx + 1),
                             name: p.name || p.title || 'Sản phẩm',
                             options: (p.options || [p]).map(opt => {
+                                // Lấy giá chuẩn trực tiếp từ API nguồn ShopHenry (giá người thường)
                                 const normalPrice = Number(opt.price || opt.retail_price || opt.original_price || opt.sell_price || 0);
 
                                 return {
@@ -836,17 +836,12 @@
         async function deleteCategoryPrompt(catName, catId) {
             if (!confirm(`Bạn có chắc chắn muốn xóa mục [${catName}] không?`)) return;
             try {
-                await apiRequest('/api/admin/action', {
-                    method: 'POST',
-                    body: JSON.stringify({ action: 'delete_category', id: catId })
-                });
-
-                categoriesData = categoriesData.filter(c => c.id !== catId && c.name.trim() !== catName.trim());
+                await adminApi('delete_category', { id: catId }).catch(() => {});
+                categoriesData = categoriesData.filter(c => c.name.trim() !== catName.trim());
                 renderCategoriesList();
                 closeCategoryModal();
                 tg.showAlert(`Đã xóa mục [${catName}] thành công!`);
-                
-                if (selectedCategory?.id === catId || selectedCategory?.name?.trim() === catName.trim()) {
+                if (selectedCategory?.name?.trim() === catName.trim()) {
                     if (categoriesData.length > 0) chooseCategory(categoriesData[0].name);
                     else {
                         document.getElementById('packages-list').innerHTML = '<p class="deposit-desc">Không còn mục sản phẩm nào.</p>';
