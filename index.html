@@ -124,11 +124,11 @@
 
         .modal-overlay, .admin-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(0, 0, 0, 0.8); display: none; justify-content: center; align-items: flex-end; z-index: 1000; }
         .modal-overlay.open, .admin-modal-overlay.open { display: flex; }
-        .modal-content { background-color: #071120; border: 1px solid #1a3559; border-top-left-radius: 24px; border-top-right-radius: 24px; width: 100%; max-height: 80vh; overflow-y: auto; padding: 16px; box-sizing: border-box; }
+        .modal-content { background-color: #071120; border: 1px solid #1a3559; border-top-left-radius: 24px; border-top-right-radius: 24px; width: 100%; max-height: 82vh; overflow-y: auto; padding: 16px; box-sizing: border-box; }
         .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #102138; }
         .modal-title { font-size: 14px; font-weight: 800; color: var(--accent-blue); }
         .close-modal-btn { background-color: #102138; border: none; color: var(--accent-blue); width: 28px; height: 28px; border-radius: 50%; font-weight: bold; cursor: pointer; }
-        .category-option-item { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+        .category-option-item { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; cursor: pointer; }
 
         .deposit-card, .history-card, .overview-card, .ref-card, .kho-card, .admin-card { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 20px; padding: 17px 13px; margin-bottom: 16px; }
         .deposit-title, .admin-title { font-size: 15px; font-weight: 800; color: var(--accent-yellow); margin: 0 0 4px 0; }
@@ -164,6 +164,7 @@
         .admin-panel-card { display: none; }
         .admin-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 10px; }
         .admin-action-btn { background-color: #1a1518; border: 1px solid #3d2025; color: #ff6677; padding: 11px; border-radius: 10px; font-size: 12px; font-weight: 700; cursor: pointer; text-align: center; }
+        .admin-price-btn { background: linear-gradient(135deg, rgba(0,229,168,0.18), rgba(14,165,233,0.16)); border: 1px solid rgba(0,229,168,0.45); color: #00e5a8; grid-column: 1 / -1; }
 
         .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background-color: rgba(3, 12, 8, 0.78); border-top: 1px solid rgba(0,229,168,0.24); display: flex; justify-content: space-around; padding: 10px 0 16px 0; z-index: 100; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
         .nav-item { background: none; border: none; display: flex; flex-direction: column; align-items: center; color: #00e5a8; cursor: pointer; font-size: 10px; font-weight: 800; gap: 4px; width: 33.33%; }
@@ -207,12 +208,6 @@
         .package-card.selected, .app-item.selected { border-color: rgba(0,229,168,0.72); box-shadow: 0 0 12px rgba(0,229,168,0.14); }
         .key-copy-text, .success-key-button { background: rgba(4,16,11,0.58); border-color: rgba(0,229,168,0.2); }
         .ref-btn, .apply-voucher-btn { background: rgba(0,229,168,0.12); border-color: rgba(0,229,168,0.3); }
-        .btn-neon {
-            background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 50%, #4f46e5 100%);
-            background-size: 200% auto;
-            transition: all 0.3s ease;
-            box-shadow: 0 0 20px rgba(14, 165, 233, 0.45);
-        }
     </style>
 </head>
 <body>
@@ -350,6 +345,20 @@
         </div>
     </div>
 
+    <!-- MODAL ADMIN SỬA GIÁ BÁN RIÊNG (CHỈ ĐỔI BÊN MINI APP / BOT) -->
+    <div class="admin-modal-overlay" id="admin-price-modal" onclick="closePriceModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-title" id="price-modal-title" style="color:#00e5a8;">SỬA GIÁ BÁN RIÊNG (MINI APP / BOT)</div>
+                <button class="close-modal-btn" onclick="closePriceModal()">✕</button>
+            </div>
+            <p id="price-modal-desc" style="font-size:11px; color:var(--text-sub); margin-top:0;">
+                Giá chỉnh ở đây chỉ áp dụng cho Mini App / Bot của bạn để ăn lãi. Không đổi giá trên API ShopHenry.
+            </p>
+            <div id="price-modal-body" style="max-height: 62vh; overflow-y: auto;"></div>
+        </div>
+    </div>
+
     <div class="purchase-success-overlay" id="purchase-success-modal" onclick="closePurchaseSuccess(event)">
         <div class="purchase-success-card" onclick="event.stopPropagation()">
             <h2 class="purchase-success-title">🎉 MUA HÀNG THÀNH CÔNG! 🎉</h2>
@@ -412,8 +421,9 @@
     <div id="tab-profile" class="tab-content">
         <div class="admin-card admin-panel-card" id="admin-panel-section">
             <div class="admin-title">QUẢN TRỊ ADMIN (HỆ THỐNG)</div>
-            <p class="deposit-desc">Bảng điều khiển quản lý trực tiếp từ bot.py.</p>
+            <p class="deposit-desc">Bảng điều khiển quản lý trực tiếp từ bot.py & Mini App.</p>
             <div class="admin-grid">
+                <button class="admin-action-btn admin-price-btn" onclick="openCustomPriceProductModal()">💲 Sửa Giá Bán Riêng (Chọn Sản Phẩm → Thời Hạn)</button>
                 <button class="admin-action-btn" onclick="adminAction('broadcast')">📢 Gửi Thông Báo</button>
                 <button class="admin-action-btn" onclick="adminAction('stats')">📊 Thống Kê Hệ Thống</button>
                 <button class="admin-action-btn" onclick="adminAction('usercheck')">👤 Quản Lý Người Dùng</button>
@@ -497,6 +507,7 @@
         const API_BASE_URL = window.location.origin;
         const SHOPHENRY_API_URL = "https://shophenry.io.vn/api/seller.php";
         const SHOPHENRY_TOKEN = "sk_live_3f0cefe3182f2c54895460ae01a13351";
+        const CUSTOM_PRICE_STORAGE_KEY = "jinny_custom_miniapp_prices_v1";
 
         const FIXED_NORMAL_PRICES = {
             "AIM LAG ADR + IOS": { "1 Giờ": 5000, "1 Ngày": 40000, "7 Ngày": 100000, "30 Ngày": 150000 },
@@ -511,6 +522,7 @@
         let balanceRefreshInterval = null;
         let currentUserBalance = 0;
         let categoriesData = [];
+        let rawSyncedCategories = [];
         let selectedCategory = null;
         let selectedOptionId = null;
         let selectedOptionObj = null;
@@ -521,6 +533,93 @@
         let isEditingAppImage = false;
         let countdownInterval = null;
         let depositSubmitBusy = false;
+
+        function loadCustomPricesMap() {
+            try {
+                const raw = localStorage.getItem(CUSTOM_PRICE_STORAGE_KEY);
+                const parsed = raw ? JSON.parse(raw) : {};
+                return (parsed && typeof parsed === 'object') ? parsed : {};
+            } catch (_) {
+                return {};
+            }
+        }
+
+        function saveCustomPricesMap(map) {
+            try {
+                localStorage.setItem(CUSTOM_PRICE_STORAGE_KEY, JSON.stringify(map || {}));
+            } catch (_) {}
+        }
+
+        function getCustomPriceKey(categoryName, productName, durationLabel, optionId) {
+            const c = String(categoryName || '').trim().toLowerCase();
+            const p = String(productName || '').trim().toLowerCase();
+            const d = String(durationLabel || '').trim().toLowerCase();
+            return `${c}::${p}::${d}::${String(optionId || '')}`;
+        }
+
+        function getEffectivePrice(categoryName, productName, optionObj, basePrice) {
+            const customMap = loadCustomPricesMap();
+            const key = getCustomPriceKey(
+                categoryName,
+                productName,
+                optionObj?.duration_label || optionObj?.duration || '',
+                optionObj?.id || ''
+            );
+            if (Object.prototype.hasOwnProperty.call(customMap, key)) {
+                const val = Number(customMap[key]);
+                if (!Number.isNaN(val) && val >= 0) return val;
+            }
+            const fallbackKey = `${String(categoryName || '').trim().toLowerCase()}::${String(productName || '').trim().toLowerCase()}::${String(optionObj?.duration_label || optionObj?.duration || '').trim().toLowerCase()}`;
+            const matchedEntryKey = Object.keys(customMap).find(k => k.startsWith(fallbackKey + '::'));
+            if (matchedEntryKey) {
+                const val = Number(customMap[matchedEntryKey]);
+                if (!Number.isNaN(val) && val >= 0) return val;
+            }
+            return Number(basePrice || 0);
+        }
+
+        function setCustomPriceForOption(categoryName, productName, optionObj, newPrice) {
+            const customMap = loadCustomPricesMap();
+            const key = getCustomPriceKey(
+                categoryName,
+                productName,
+                optionObj?.duration_label || optionObj?.duration || '',
+                optionObj?.id || ''
+            );
+            customMap[key] = Number(newPrice);
+            saveCustomPricesMap(customMap);
+        }
+
+        function resetCustomPriceForOption(categoryName, productName, optionObj) {
+            const customMap = loadCustomPricesMap();
+            const key = getCustomPriceKey(
+                categoryName,
+                productName,
+                optionObj?.duration_label || optionObj?.duration || '',
+                optionObj?.id || ''
+            );
+            delete customMap[key];
+            saveCustomPricesMap(customMap);
+        }
+
+        function applyCustomPricesToCatalog(sourceCats) {
+            return (sourceCats || []).map(cat => ({
+                ...cat,
+                products: (cat.products || []).map(prod => ({
+                    ...prod,
+                    options: (prod.options || []).map(opt => {
+                        const basePrice = Number(opt._base_price ?? opt.price ?? 0);
+                        const customPrice = getEffectivePrice(cat.name, prod.name, opt, basePrice);
+                        return {
+                            ...opt,
+                            _base_price: basePrice,
+                            _has_custom_price: customPrice !== basePrice,
+                            price: customPrice
+                        };
+                    })
+                }))
+            }));
+        }
 
         async function apiRequest(path, options = {}) {
             if (!tg.initData) throw new Error('Vui lòng mở Mini App từ Telegram để xác thực tài khoản.');
@@ -722,6 +821,7 @@
                                         shophenry_id: String(opt.id || opt.product_id || index),
                                         duration: dur,
                                         duration_label: dur,
+                                        _base_price: normalPrice,
                                         price: normalPrice,
                                         stock: Number(opt.stock ?? opt.quantity ?? opt.available ?? 10),
                                         shophenry: true
@@ -769,6 +869,7 @@
                     shophenry_id: shId,
                     duration: durLabel,
                     duration_label: durLabel,
+                    _base_price: normalPrice,
                     price: normalPrice,
                     stock: Number(item.stock ?? item.quantity ?? item.available ?? 10),
                     shophenry: true
@@ -802,7 +903,7 @@
                     }
                 } catch(_) {}
 
-                categoriesData = syncedCats.length > 0 ? syncedCats : [{
+                rawSyncedCategories = syncedCats.length > 0 ? syncedCats : [{
                     id: 1,
                     name: 'Free Fire',
                     products: [
@@ -810,19 +911,23 @@
                             id: 1,
                             name: 'AIM LAG ADR + IOS',
                             options: [
-                                { id: 'sh_1', shophenry_id: '1', duration: '1 Giờ', duration_label: '1 Giờ', price: 5000, stock: 169, shophenry: true },
-                                { id: 'sh_2', shophenry_id: '2', duration: '1 Ngày', duration_label: '1 Ngày', price: 40000, stock: 14, shophenry: true },
-                                { id: 'sh_3', shophenry_id: '3', duration: '7 Ngày', duration_label: '7 Ngày', price: 100000, stock: 9, shophenry: true },
-                                { id: 'sh_4', shophenry_id: '4', duration: '30 Ngày', duration_label: '30 Ngày', price: 150000, stock: 7, shophenry: true }
+                                { id: 'sh_1', shophenry_id: '1', duration: '1 Giờ', duration_label: '1 Giờ', _base_price: 5000, price: 5000, stock: 169, shophenry: true },
+                                { id: 'sh_2', shophenry_id: '2', duration: '1 Ngày', duration_label: '1 Ngày', _base_price: 40000, price: 40000, stock: 14, shophenry: true },
+                                { id: 'sh_3', shophenry_id: '3', duration: '7 Ngày', duration_label: '7 Ngày', _base_price: 100000, price: 100000, stock: 9, shophenry: true },
+                                { id: 'sh_4', shophenry_id: '4', duration: '30 Ngày', duration_label: '30 Ngày', _base_price: 150000, price: 150000, stock: 7, shophenry: true }
                             ]
                         }
                     ]
                 }];
 
+                categoriesData = applyCustomPricesToCatalog(rawSyncedCategories);
+
                 document.getElementById('category-count').textContent = categoriesData.length + ' mục';
                 renderCategoriesList();
-                if (categoriesData.length > 0 && !selectedCategory) {
-                    chooseCategory(categoriesData[0].name);
+
+                const activeCatName = selectedCategory?.name || (categoriesData[0]?.name || '');
+                if (activeCatName) {
+                    chooseCategory(activeCatName, { preserveSelection: true });
                 }
             } catch (e) {
                 console.warn('Lỗi tải danh mục ShopHenry:', e);
@@ -839,7 +944,7 @@
                 item.className = 'category-option-item';
                 
                 let deleteBtnHtml = window.isUserAdmin ? 
-                    `<button onclick="event.stopPropagation(); deleteCategoryPrompt('${cleanName.replace(/'/g, "\\'")}', ${cat.id})" style="background:#3d1518; border:1px solid #7d262d; color:#ff6677; font-size:10px; font-weight:700; padding:6px 10px; border-radius:8px; cursor:pointer;">🗑 Xóa mục</button>` 
+                    `<button onclick="event.stopPropagation(); deleteCategoryPrompt('${cleanName.replace(/'/g, "\\'")}', '${String(cat.id || '').replace(/'/g, "\\'")}')" style="background:#3d1518; border:1px solid #7d262d; color:#ff6677; font-size:10px; font-weight:700; padding:6px 10px; border-radius:8px; cursor:pointer;">🗑 Xóa mục</button>` 
                     : '';
 
                 item.innerHTML = `
@@ -859,8 +964,11 @@
         async function deleteCategoryPrompt(catName, catId) {
             if (!confirm(`Bạn có chắc chắn muốn xóa mục [${catName}] không?`)) return;
             try {
-                await adminApi('delete_category', { id: catId }).catch(() => {});
-                categoriesData = categoriesData.filter(c => c.name.trim() !== catName.trim());
+                if (catId && !Number.isNaN(Number(catId))) {
+                    await adminApi('delete_category', { id: Number(catId) }).catch(() => {});
+                }
+                rawSyncedCategories = rawSyncedCategories.filter(c => c.name.trim() !== catName.trim());
+                categoriesData = applyCustomPricesToCatalog(rawSyncedCategories);
                 renderCategoriesList();
                 closeCategoryModal();
                 tg.showAlert(`Đã xóa mục [${catName}] thành công!`);
@@ -917,8 +1025,169 @@
             document.getElementById('admin-category-modal').classList.remove('open');
         }
 
-        function chooseCategory(catName) {
-            tg.HapticFeedback?.notificationOccurred('success');
+        /* =====================================================================
+           MENU ADMIN SỬA GIÁ BÁN RIÊNG (CHỈ ĐỔI BÊN MINI APP / BOT)
+           ===================================================================== */
+        function getAllSyncedProductsFlat() {
+            const items = [];
+            (categoriesData || []).forEach(cat => {
+                (cat.products || []).forEach(prod => {
+                    items.push({
+                        categoryName: cat.name,
+                        product: prod
+                    });
+                });
+            });
+            return items;
+        }
+
+        function openCustomPriceProductModal() {
+            tg.HapticFeedback?.impactOccurred('light');
+            const titleEl = document.getElementById('price-modal-title');
+            const descEl = document.getElementById('price-modal-desc');
+            const bodyEl = document.getElementById('price-modal-body');
+
+            titleEl.textContent = '💲 CHỌN SẢN PHẨM ĐỂ SỬA GIÁ RIÊNG';
+            descEl.textContent = 'Nhấp vào 1 sản phẩm đã đồng bộ để xem & đổi giá từng gói thời hạn (chỉ áp dụng cho Mini App / Bot của bạn).';
+            bodyEl.innerHTML = '';
+
+            const flatProducts = getAllSyncedProductsFlat();
+            if (!flatProducts.length) {
+                bodyEl.innerHTML = '<p class="deposit-desc">Chưa có sản phẩm nào được đồng bộ.</p>';
+                document.getElementById('admin-price-modal').classList.add('open');
+                return;
+            }
+
+            flatProducts.forEach(({ categoryName, product }) => {
+                const opts = product.options || [];
+                const customCount = opts.filter(o => o._has_custom_price).length;
+
+                const row = document.createElement('div');
+                row.className = 'category-option-item';
+                row.onclick = () => openCustomPriceDurationModal(categoryName, product.name);
+
+                row.innerHTML = `
+                    <div style="min-width:0; flex-grow:1;">
+                        <h5 style="margin:0; font-size:13px; font-weight:800; color:#fff;">${product.name}</h5>
+                        <p style="margin:3px 0 0 0; font-size:10px; color:var(--text-sub);">
+                            Mục: ${categoryName} · ${opts.length} gói thời hạn
+                            ${customCount > 0 ? `· <span style="color:#00e5a8;">Đã chỉnh ${customCount} giá riêng</span>` : ''}
+                        </p>
+                    </div>
+                    <span style="color:#00e5a8; font-size:14px; font-weight:800; margin-left:10px;">Đổi giá ›</span>
+                `;
+                bodyEl.appendChild(row);
+            });
+
+            document.getElementById('admin-price-modal').classList.add('open');
+        }
+
+        function openCustomPriceDurationModal(categoryName, productName) {
+            tg.HapticFeedback?.selectionChanged();
+            categoriesData = applyCustomPricesToCatalog(rawSyncedCategories);
+
+            const cat = categoriesData.find(c => c.name === categoryName);
+            const prod = (cat?.products || []).find(p => p.name === productName);
+
+            const titleEl = document.getElementById('price-modal-title');
+            const descEl = document.getElementById('price-modal-desc');
+            const bodyEl = document.getElementById('price-modal-body');
+
+            titleEl.textContent = `⏱ ${productName}`;
+            descEl.innerHTML = `
+                <button onclick="openCustomPriceProductModal()" style="background:#102138; border:1px solid #1f3c63; color:#00e5a8; font-size:11px; font-weight:800; padding:5px 10px; border-radius:8px; cursor:pointer; margin-bottom:8px;">← Quay lại danh sách sản phẩm</button>
+                <div>Nhấp vào từng thời hạn bên dưới để sửa giá bán trên Mini App / Bot (API ShopHenry giữ nguyên):</div>
+            `;
+            bodyEl.innerHTML = '';
+
+            if (!prod || !(prod.options || []).length) {
+                bodyEl.innerHTML = '<p class="deposit-desc">Sản phẩm này chưa có gói thời hạn nào.</p>';
+                return;
+            }
+
+            (prod.options || []).forEach(opt => {
+                const durLabel = fullDurationLabel(opt.duration_label || opt.duration);
+                const currentPrice = Number(opt.price || 0);
+                const basePrice = Number(opt._base_price ?? currentPrice);
+                const diff = currentPrice - basePrice;
+
+                const card = document.createElement('div');
+                card.className = 'category-option-item';
+                card.style.marginBottom = '10px';
+                card.onclick = () => editSingleCustomPrice(categoryName, productName, opt);
+
+                const badgeText = diff > 0
+                    ? `<span style="color:#00ff88;">Lãi +${diff.toLocaleString('vi-VN')}đ</span>`
+                    : (diff < 0
+                        ? `<span style="color:#ffcc00;">Giảm ${Math.abs(diff).toLocaleString('vi-VN')}đ</span>`
+                        : `<span style="color:var(--text-sub);">Giá gốc / mặc định</span>`);
+
+                card.innerHTML = `
+                    <div style="min-width:0; flex-grow:1;">
+                        <h5 style="margin:0; font-size:13px; font-weight:800; color:#fff;">${durLabel}</h5>
+                        <p style="margin:3px 0 0 0; font-size:10px; color:var(--text-sub);">
+                            Giá chuẩn: ${basePrice.toLocaleString('vi-VN')}đ · ${badgeText} · Kho: ${opt.stock}
+                        </p>
+                    </div>
+                    <div style="text-align:right; margin-left:10px;">
+                        <div style="font-size:13px; font-weight:900; color:#00e5a8;">${currentPrice.toLocaleString('vi-VN')}đ</div>
+                        <div style="font-size:10px; color:#94a69c;">Nhấp để sửa</div>
+                    </div>
+                `;
+                bodyEl.appendChild(card);
+            });
+        }
+
+        function editSingleCustomPrice(categoryName, productName, opt) {
+            const durLabel = fullDurationLabel(opt.duration_label || opt.duration);
+            const currentPrice = Number(opt.price || 0);
+            const basePrice = Number(opt._base_price ?? currentPrice);
+
+            const input = prompt(
+                `Sửa giá bán riêng cho: ${productName} – ${durLabel}\n` +
+                `Giá hiện tại trên Mini App: ${currentPrice.toLocaleString('vi-VN')}đ\n` +
+                `Giá tham chiếu ban đầu: ${basePrice.toLocaleString('vi-VN')}đ\n\n` +
+                `Nhập giá bán mới (VNĐ) hoặc nhập "reset" để về giá ban đầu:`,
+                String(currentPrice)
+            );
+
+            if (input === null) return;
+            const trimmed = input.trim();
+            if (!trimmed) return;
+
+            if (trimmed.toLowerCase() === 'reset') {
+                resetCustomPriceForOption(categoryName, productName, opt);
+                tg.showAlert(`Đã khôi phục giá mặc định cho ${productName} – ${durLabel}.`);
+            } else {
+                const parsedPrice = Number(trimmed.replace(/[^\d]/g, ''));
+                if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+                    tg.showAlert('Giá nhập không hợp lệ. Vui lòng nhập số VNĐ lớn hơn 0.');
+                    return;
+                }
+                setCustomPriceForOption(categoryName, productName, opt, parsedPrice);
+                tg.showAlert(
+                    `Đã cập nhật giá bán riêng:\n${productName} – ${durLabel}: ${parsedPrice.toLocaleString('vi-VN')}đ\n` +
+                    `(Chỉ áp dụng trên Mini App / Bot của bạn)`
+                );
+            }
+
+            categoriesData = applyCustomPricesToCatalog(rawSyncedCategories);
+            if (selectedCategory?.name) {
+                chooseCategory(selectedCategory.name, { preserveSelection: true });
+            }
+            openCustomPriceDurationModal(categoryName, productName);
+        }
+
+        function closePriceModal(event) {
+            if (event && event.target && event.target.id !== 'admin-price-modal') return;
+            document.getElementById('admin-price-modal').classList.remove('open');
+        }
+
+        function chooseCategory(catName, opts = {}) {
+            const prevOptionId = opts.preserveSelection ? selectedOptionId : null;
+            if (!opts.preserveSelection) {
+                tg.HapticFeedback?.notificationOccurred('success');
+            }
             document.getElementById('selected-cat-name').innerText = catName;
             selectedCategory = categoriesData.find(c => c.name.trim() === catName.trim()) || categoriesData[0] || null;
             
@@ -931,46 +1200,62 @@
 
             if (!selectedCategory || !selectedCategory.products.length) {
                 list.innerHTML = '<p class="deposit-desc">Danh mục này chưa có sản phẩm.</p>';
-            } else {
-                selectedCategory.products.forEach(product => {
-                    const heading = document.createElement('div');
-                    heading.className = 'section-header';
-                    heading.textContent = product.name;
-                    list.appendChild(heading);
-
-                    (product.options || []).forEach(option => {
-                        const card = document.createElement('div');
-                        card.className = 'package-card';
-                        
-                        const info = document.createElement('div');
-                        info.className = 'pkg-info';
-                        
-                        const name = document.createElement('h5');
-                        name.textContent = fullDurationLabel(option.duration_label || option.duration);
-                        
-                        const stock = document.createElement('p');
-                        stock.textContent = 'Kho còn: ' + option.stock;
-                        stock.style.color = Number(option.stock) > 0 ? '#22c55e' : '#ff4d4f';
-                        stock.style.fontWeight = '800';
-                        
-                        info.append(name, stock);
-
-                        const priceBox = document.createElement('div');
-                        priceBox.className = 'pkg-price-box';
-                        
-                        const price = document.createElement('p');
-                        price.className = 'pkg-new-price';
-                        price.textContent = Number(option.price).toLocaleString('vi-VN') + 'đ';
-                        
-                        priceBox.appendChild(price);
-                        card.append(info, priceBox);
-                        
-                        card.onclick = () => selectPackage(card, option.duration, option.price, option.id, product.name, option);
-                        list.appendChild(card);
-                    });
-                });
+                document.getElementById('checkout-box').style.display = 'none';
+                return;
             }
-            document.getElementById('checkout-box').style.display = 'none';
+
+            let matchedCard = null;
+            let matchedArgs = null;
+
+            selectedCategory.products.forEach(product => {
+                const heading = document.createElement('div');
+                heading.className = 'section-header';
+                heading.textContent = product.name;
+                list.appendChild(heading);
+
+                (product.options || []).forEach(option => {
+                    const card = document.createElement('div');
+                    card.className = 'package-card';
+                    
+                    const info = document.createElement('div');
+                    info.className = 'pkg-info';
+                    
+                    const name = document.createElement('h5');
+                    name.textContent = fullDurationLabel(option.duration_label || option.duration);
+                    
+                    const stock = document.createElement('p');
+                    stock.textContent = 'Kho còn: ' + option.stock;
+                    stock.style.color = Number(option.stock) > 0 ? '#22c55e' : '#ff4d4f';
+                    stock.style.fontWeight = '800';
+                    
+                    info.append(name, stock);
+
+                    const priceBox = document.createElement('div');
+                    priceBox.className = 'pkg-price-box';
+                    
+                    const price = document.createElement('p');
+                    price.className = 'pkg-new-price';
+                    price.textContent = Number(option.price).toLocaleString('vi-VN') + 'đ';
+                    
+                    priceBox.appendChild(price);
+                    card.append(info, priceBox);
+                    
+                    const args = [card, option.duration, option.price, option.id, product.name, option];
+                    card.onclick = () => selectPackage(...args);
+                    list.appendChild(card);
+
+                    if (prevOptionId && String(option.id) === String(prevOptionId)) {
+                        matchedCard = card;
+                        matchedArgs = args;
+                    }
+                });
+            });
+
+            if (matchedCard && matchedArgs) {
+                selectPackage(...matchedArgs);
+            } else {
+                document.getElementById('checkout-box').style.display = 'none';
+            }
         }
 
         function selectPackage(element, pkgName, price, optionId, productName, optionObj = null) {
@@ -1067,6 +1352,7 @@
                 try {
                     const shProductId = selectedOptionObj?.shophenry_id || String(selectedOptionId).replace(/^sh_/, '');
                     
+                    // Gọi API ShopHenry theo product_id & quantity (không gửi giá bán lẻ riêng của Mini App)
                     const shRes = await fetch(`${SHOPHENRY_API_URL}?action=buy`, {
                         method: 'POST',
                         headers: {
@@ -1232,6 +1518,19 @@
         }
         function adminMoney(v) { return Number(v || 0).toLocaleString('vi-VN') + 'đ'; }
 
+        async function adminAddKeyFlow() {
+            try {
+                const productName = adminAsk('Nhập tên sản phẩm cần thêm key:', 'AIM LAG ADR + IOS');
+                if (!productName) return;
+                const keysText = adminAsk('Nhập danh sách key (mỗi key cách nhau bởi dấu phẩy hoặc xuống dòng):');
+                if (!keysText) return;
+                const r = await adminApi('add_key', { product_name: productName, keys: keysText });
+                tg.showAlert(r.message || 'Đã thêm key.');
+            } catch (e) {
+                tg.showAlert(e.message || 'Lỗi thêm key.');
+            }
+        }
+
         async function adminAction(actionType) {
             try {
                 if (actionType === 'stats') {
@@ -1245,6 +1544,35 @@
                 }
                 if (actionType === 'maintenance') {
                     const r=await adminApi('maintenance'); tg.showAlert(r.message); return;
+                }
+                if (actionType === 'usercheck') {
+                    const targetId = adminAsk('Nhập Telegram User ID cần kiểm tra:');
+                    if (!targetId) return;
+                    const r = await adminApi('usercheck', { user_id: targetId });
+                    tg.showAlert(r.message || JSON.stringify(r.user || r));
+                    return;
+                }
+                if (actionType === 'stock') {
+                    const summary = getAllSyncedProductsFlat().map(({ product }) => {
+                        const totalStock = (product.options || []).reduce((acc, o) => acc + Number(o.stock || 0), 0);
+                        return `• ${product.name}: ${totalStock} key`;
+                    }).join('\n') || 'Không có dữ liệu kho.';
+                    tg.showAlert('📦 TỔNG KHO SẢN PHẨM:\n' + summary);
+                    return;
+                }
+                if (actionType === 'detail_product' || actionType === 'add_guide' || actionType === 'rename_category' || actionType === 'emoji') {
+                    const extra = {};
+                    if (actionType === 'add_guide') {
+                        extra.url = adminAsk('Nhập link hướng dẫn cài đặt:');
+                        if (!extra.url) return;
+                    } else if (actionType === 'rename_category') {
+                        extra.old_name = adminAsk('Tên danh mục cũ:');
+                        extra.new_name = adminAsk('Tên danh mục mới:');
+                        if (!extra.old_name || !extra.new_name) return;
+                    }
+                    const r = await adminApi(actionType, extra);
+                    tg.showAlert(r.message || 'Hoàn tất.');
+                    return;
                 }
                 const ov=await adminOverview();
                 const cats=(ov.categories||[]).map(x=>`${x.id}: ${x.name}`).join('\n') || 'Chưa có danh mục';
