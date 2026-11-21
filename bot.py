@@ -35,8 +35,8 @@ from telegram.ext import (
 
 DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
 BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
-SHOPHENRY_API_TOKEN = os.getenv('SHOPHENRY_API_TOKEN', '').strip()
-SHOPHENRY_API_URL = os.getenv('SHOPHENRY_API_URL', 'https://shophenry.io.vn/api/seller.php').strip()
+SHOPYURI_API_TOKEN = os.getenv('SHOPYURI_API_TOKEN', '').strip()
+SHOPYURI_API_URL = os.getenv('SHOPYURI_API_URL', 'https://shopyuri.site/api/seller.php').strip()
 ADMIN_IDS = {int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip().isdigit()}
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
 # Fallback VietQR settings mirror env.example so deposits work even when
@@ -105,7 +105,7 @@ ADMIN_KB = InlineKeyboardMarkup([
     [quick_button('Thông tin người dùng', callback_data='adm:usercheck')],
     [quick_button('Thêm sản phẩm', callback_data='adm:addproduct')],
     [quick_button('Thêm link cách cài', callback_data='adm:addguide')],
-    [quick_button('Gán ID ShopHenry', callback_data='adm:mapshop')],
+    [quick_button('Gán ID Shopyuri', callback_data='adm:mapshop')],
     [quick_button('Sửa giá / thời hạn', callback_data='adm:editproduct')],
     [quick_button('Sửa giá Sell', callback_data='adm:editsellprice')],
     [quick_button('Chi tiết sản phẩm', callback_data='adm:detailproduct')],
@@ -203,7 +203,8 @@ def init_db():
             joined_at TEXT NOT NULL, last_seen TEXT NOT NULL)''',
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_deposit_request_at TIMESTAMPTZ",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_seller BOOLEAN NOT NULL DEFAULT FALSE",
-        "ALTER TABLE product_options ADD COLUMN IF NOT EXISTS shophenry_product_id TEXT",
+        "ALTER TABLE product_options ADD COLUMN IF NOT EXISTS shophenry_product_id TEXT",  # legacy column retained for safe DB migration
+        "ALTER TABLE product_options ADD COLUMN IF NOT EXISTS shopyuri_product_id TEXT",
         "ALTER TABLE product_options ADD COLUMN IF NOT EXISTS sell_price BIGINT NOT NULL DEFAULT 0",
         "ALTER TABLE purchases ADD COLUMN IF NOT EXISTS supplier_order_code TEXT",
         "ALTER TABLE categories ADD COLUMN IF NOT EXISTS guide_url TEXT",
@@ -396,7 +397,7 @@ async def show_category(q, category_id, user_id):
     if not cat: await q.edit_message_text('Danh mục không còn tồn tại.'); return
     rows = []
     for o in opts:
-        src_str = 'ShopHenry' if o.get('shophenry_product_id') else f"Kho: {stock_for_option(o['id'])}"
+        src_str = 'Shopyuri' if o.get('shopyuri_product_id') else f"Kho: {stock_for_option(o['id'])}"
             
         current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
         btn_text = f"{o['product_name']} - {o['duration_label']} — {current_price:,}đ [{src_str}]"
@@ -423,7 +424,7 @@ async def show_quantity(q, option_id, context, user_id):
         [quick_button('Mua số lượng khác',callback_data=f'shop:qty:{option_id}:other')],
         [InlineKeyboardButton('📂 Quay Lại',callback_data=f"shop:cat:{o['category_id']}")]
     ]
-    src_text = 'ShopHenry' if o.get('shophenry_product_id') else f"Kho: {stock_for_option(option_id)}"
+    src_text = 'Shopyuri' if o.get('shopyuri_product_id') else f"Kho: {stock_for_option(option_id)}"
 
     await q.edit_message_text(
         f"🛒 {escape(o['product_name'])}\n⏳ {escape(o['duration_label'])}"
@@ -439,10 +440,10 @@ async def show_confirm(q, option_id, qty, context, user_id):
     is_seller = bool(u_row and u_row['is_seller'])
     current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
     total=current_price*qty
-    is_shophenry=bool(o.get('shophenry_product_id'))
+    is_shopyuri=bool(o.get('shopyuri_product_id'))
     context.user_data.update(pending_purchase={'option_id':option_id,'quantity':qty,'total':total})
-    payment_note = ('💳 Thanh toán: Trừ số dư tài khoản trong bot; ShopHenry cấp key.'
-                    if is_shophenry else '💳 Thanh toán: Trừ số dư tài khoản trong bot.')
+    payment_note = ('💳 Thanh toán: Trừ số dư tài khoản trong bot; Shopyuri cấp key.'
+                    if is_shopyuri else '💳 Thanh toán: Trừ số dư tài khoản trong bot.')
     await q.edit_message_text(
         f"🧾 XÁC NHẬN MUA HÀNG\n\n📁 Danh mục: {escape(o['category_name'])}"
         f"\n📦 Sản phẩm: {escape(o['product_name'])}\n⏳ Thời hạn: {escape(o['duration_label'])}"
@@ -454,35 +455,52 @@ async def show_confirm(q, option_id, qty, context, user_id):
         parse_mode='HTML',
     )
 
-def shophenry_buy(product_id, quantity):
-    if not SHOPHENRY_API_TOKEN:
-        raise RuntimeError('Thiếu SHOPHENRY_API_TOKEN trong biến môi trường.')
-    url = SHOPHENRY_API_URL + ('&' if '?' in SHOPHENRY_API_URL else '?') + 'action=buy'
-    body = json.dumps({'product_id': int(product_id), 'quantity': int(quantity)}).encode('utf-8')
+def shopyuri_buy(product_id, quantity):
+    """Buy keys from Shopyuri. The API token is never exposed to the Mini App."""
+    if not SHOPYURI_API_TOKEN:
+        raise RuntimeError('Thiếu SHOPYURI_API_TOKEN trong biến môi trường Railway.')
+    try:
+        product_id = int(product_id)
+        quantity = int(quantity)
+    except (TypeError, ValueError):
+        raise RuntimeError('Shopyuri product_id hoặc quantity không hợp lệ.')
+    if product_id <= 0 or quantity < 1 or quantity > 100:
+        raise RuntimeError('Shopyuri product_id hoặc quantity nằm ngoài giới hạn.')
+
+    url = SHOPYURI_API_URL.split('?', 1)[0] + '?action=buy'
+    body = json.dumps({'product_id': product_id, 'quantity': quantity}).encode('utf-8')
     req = urllib.request.Request(
         url, data=body, method='POST',
         headers={
-            'Authorization': f'Bearer {SHOPHENRY_API_TOKEN}',
+            'Authorization': f'Bearer {SHOPYURI_API_TOKEN}',
             'Content-Type': 'application/json',
             'Accept': 'application/json',
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            payload = json.loads(response.read().decode('utf-8'))
+        with urllib.request.urlopen(req, timeout=35) as response:
+            raw = response.read().decode('utf-8', errors='replace')
+            payload = json.loads(raw) if raw else {}
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode('utf-8', errors='replace')[:1000]
         try:
-            payload = json.loads(raw)
+            error_payload = json.loads(raw)
         except Exception:
-            raise RuntimeError(f'ShopHenry trả HTTP {exc.code}.')
-        if not payload.get('success'):
-            raise RuntimeError(str(payload.get('message') or f'ShopHenry từ chối đơn (HTTP {exc.code}).'))
-    if not isinstance(payload, dict) or not payload.get('success'):
-        message = payload.get('message', 'ShopHenry không xác nhận đơn hàng.') if isinstance(payload, dict) else 'Phản hồi ShopHenry không hợp lệ.'
+            raise RuntimeError(f'Shopyuri trả HTTP {exc.code}.')
+        message = error_payload.get('message') or error_payload.get('error') or f'Shopyuri từ chối đơn (HTTP {exc.code}).'
         raise RuntimeError(str(message))
-    data = payload.get('data') or {}
-    raw_keys = data.get('keys') or data.get('key')
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f'Không kết nối được Shopyuri: {exc.reason}')
+
+    if not isinstance(payload, dict):
+        raise RuntimeError('Shopyuri trả về dữ liệu không hợp lệ.')
+    success = payload.get('success') is True or str(payload.get('status', '')).lower() in ('success', 'ok', 'completed')
+    if not success:
+        raise RuntimeError(str(payload.get('message') or payload.get('error') or 'Shopyuri không xác nhận đơn hàng.'))
+
+    data = payload.get('data') if isinstance(payload.get('data'), dict) else payload
+    raw_keys = (data.get('keys') or data.get('key') or data.get('key_list') or
+                data.get('license_keys') or payload.get('keys') or payload.get('key'))
     if isinstance(raw_keys, list):
         keys = [str(x).strip() for x in raw_keys if str(x).strip()]
     elif isinstance(raw_keys, str):
@@ -491,12 +509,12 @@ def shophenry_buy(product_id, quantity):
             keys = [x.strip() for x in keys[0].split(' | ') if x.strip()]
     else:
         keys = []
-    order_code = str(data.get('order_code') or '')
-    if len(keys) != int(quantity):
+    order_code = str(data.get('order_code') or data.get('order_id') or data.get('transaction_id') or '')
+    if len(keys) != quantity:
         raise RuntimeError(
-            'ShopHenry đã báo thành công nhưng số key trả về không khớp số lượng. '
+            'Shopyuri báo thành công nhưng số key trả về không khớp số lượng. '
             + (f'Mã đơn: {order_code}. ' if order_code else '')
-            + 'Bot chưa trừ tiền khách; admin cần kiểm tra đơn ShopHenry trước khi cho mua lại.'
+            + 'Bot chưa trừ số dư; Admin cần kiểm tra đơn trên nhà cung cấp trước khi mua lại.'
         )
     return '\n'.join(keys), order_code
 
@@ -521,7 +539,7 @@ async def do_purchase(q, update, context):
     key_text = ''
     opt = None
     total = 0
-    is_shophenry = False
+    is_shopyuri = False
     try:
         con.execute('BEGIN')
         user = con.execute('SELECT balance,is_locked,is_seller FROM users WHERE user_id=? FOR UPDATE', (uid,)).fetchone()
@@ -541,7 +559,7 @@ async def do_purchase(q, update, context):
         is_seller = bool(user['is_seller'])
         current_price = opt['sell_price'] if (is_seller and opt['sell_price'] > 0) else opt['price']
         total = current_price * qty
-        is_shophenry = bool(opt.get('shophenry_product_id'))
+        is_shopyuri = bool(opt.get('shopyuri_product_id'))
 
         if user['balance'] < total:
             con.rollback()
@@ -550,18 +568,18 @@ async def do_purchase(q, update, context):
             )
             return
 
-        if is_shophenry:
+        if is_shopyuri:
             try:
                 key_text, supplier_order = await asyncio.to_thread(
-                    shophenry_buy, opt['shophenry_product_id'], qty
+                    shopyuri_buy, opt['shopyuri_product_id'], qty
                 )
                 keys = []
             except Exception as api_error:
                 con.rollback()
-                log.warning('ShopHenry purchase failed for user=%s product=%s: %s',
-                            uid, opt['shophenry_product_id'], api_error)
+                log.warning('Shopyuri purchase failed for user=%s product=%s: %s',
+                            uid, opt['shopyuri_product_id'], api_error)
                 await q.edit_message_text(
-                    '❌ ShopHenry không xác nhận được đơn.\n'
+                    '❌ Shopyuri không xác nhận được đơn.\n'
                     + str(api_error)[:700]
                     + '\n\nNếu API báo lỗi sau khi tạo đơn, đừng mua lại ngay; hãy gửi mã đơn cho admin kiểm tra.'
                 )
@@ -579,7 +597,7 @@ async def do_purchase(q, update, context):
 
         stamp = now()
         con.execute('UPDATE users SET balance=balance-? WHERE user_id=?', (total, uid))
-        if not is_shophenry:
+        if not is_shopyuri:
             for k in keys:
                 con.execute(
                     "UPDATE product_keys SET status='sold',sold_to=?,sold_at=? WHERE id=?",
@@ -598,10 +616,10 @@ async def do_purchase(q, update, context):
 
     except Exception:
         con.rollback()
-        log.exception('Purchase record failed (ShopHenry order=%s)', supplier_order or 'n/a')
-        if is_shophenry and key_text:
+        log.exception('Purchase record failed (Shopyuri order=%s)', supplier_order or 'n/a')
+        if is_shopyuri and key_text:
             await q.edit_message_text(
-                '⚠️ ShopHenry đã tạo đơn thành công nhưng bot không lưu được lịch sử. '
+                '⚠️ Shopyuri đã tạo đơn thành công nhưng bot không lưu được lịch sử. '
                 'Không mua lại đơn này.\n'
                 f'🧾 Mã đơn: {escape(supplier_order or "Chưa có mã đơn trong phản hồi API")}\n'
                 'Admin cần kiểm tra lịch sử đơn.',
@@ -1113,23 +1131,23 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if q.message:
                 await q.message.reply_text('Chưa có danh mục sản phẩm.')
             return
-        await q.edit_message_text('Chọn danh mục chứa sản phẩm cần gán ID ShopHenry:', reply_markup=InlineKeyboardMarkup(
+        await q.edit_message_text('Chọn danh mục chứa sản phẩm cần gán ID Shopyuri:', reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton(c['name'], callback_data='adm:mapshopcat:{}'.format(c['id']))] for c in cats] + [[InlineKeyboardButton('↩️ Quay lại', callback_data='adm:menu')]]))
     elif data.startswith('adm:mapshopcat:'):
         cid = int(data.split(':')[2])
         ps = get_products(cid)
-        await q.edit_message_text('Chọn sản phẩm cần gán ID ShopHenry:', reply_markup=InlineKeyboardMarkup(
+        await q.edit_message_text('Chọn sản phẩm cần gán ID Shopyuri:', reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton(p['name'], callback_data='adm:mapshopprod:{}'.format(p['id']))] for p in ps] + [[InlineKeyboardButton('↩️ Quay lại', callback_data='adm:mapshop')]]))
     elif data.startswith('adm:mapshopprod:'):
         pid = int(data.split(':')[2])
-        with db() as con: options = con.execute('SELECT id,duration_label,shophenry_product_id FROM product_options WHERE product_id=? ORDER BY id', (pid,)).fetchall()
-        await q.edit_message_text('Chọn gói thời hạn cần gán ID ShopHenry:', reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton(f"{o['duration_label']} · ID: {o['shophenry_product_id'] or 'Chưa gán'}", callback_data=f"adm:mapshopopt:{o['id']}")] for o in options] + [[InlineKeyboardButton('↩️ Quay lại', callback_data=f'adm:mapshopcat:{get_product_category_id(pid)}')]]))
+        with db() as con: options = con.execute('SELECT id,duration_label,shopyuri_product_id FROM product_options WHERE product_id=? ORDER BY id', (pid,)).fetchall()
+        await q.edit_message_text('Chọn gói thời hạn cần gán ID Shopyuri:', reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton(f"{o['duration_label']} · ID: {o['shopyuri_product_id'] or 'Chưa gán'}", callback_data=f"adm:mapshopopt:{o['id']}")] for o in options] + [[InlineKeyboardButton('↩️ Quay lại', callback_data=f'adm:mapshopcat:{get_product_category_id(pid)}')]]))
     elif data.startswith('adm:mapshopopt:'):
         oid = int(data.split(':')[2])
-        context.user_data.update(flow='map_shophenry_id', shophenry_target_option=oid)
+        context.user_data.update(flow='map_shopyuri_id', shopyuri_target_option=oid)
         if q.message:
-            await q.message.reply_text('Nhập product_id của đúng gói thời hạn này trên ShopHenry (chỉ nhập ID dạng số):')
+            await q.message.reply_text('Nhập product_id của đúng gói thời hạn này trên Shopyuri (chỉ nhập ID dạng số):')
     elif data == 'adm:addinner':
         cats = get_categories()
         if not cats:
@@ -1587,7 +1605,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
         qty = int(text); context.user_data['pending_purchase'] = {'option_id': oid, 'quantity': qty, 'total': current_price * qty}
         p = context.user_data['pending_purchase']
-        payment_note = ('Bot sẽ trừ số dư nội bộ; ShopHenry cấp key.' if o.get('shophenry_product_id') else 'Bot sẽ kiểm tra kho và số dư trước khi trừ tiền.')
+        payment_note = ('Bot sẽ trừ số dư nội bộ; Shopyuri cấp key.' if o.get('shopyuri_product_id') else 'Bot sẽ kiểm tra kho và số dư trước khi trừ tiền.')
         await msg.reply_text(f"🧾 XÁC NHẬN MUA HÀNG\n\n📁 Danh mục: {escape(o['category_name'])}\n📦 Sản phẩm: {escape(o['product_name'])}\n⏳ Thời hạn: {escape(o['duration_label'])}\n🔢 Số lượng: {p['quantity']}\n💰 Giá bán: {p['total']:,}đ\n\n{payment_note}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('✅ XÁC NHẬN MUA', callback_data='shop:confirm')], [InlineKeyboardButton('❌ HỦY', callback_data='shop:cancel')], [InlineKeyboardButton('↩️ Trở về', callback_data='menu:home')]])); return
     if flow == 'deposit_amount':
         if not text.isdigit() or not 1 <= int(text) <= 1_000_000_000:
@@ -1730,16 +1748,16 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.exception('Add product failed')
             context.user_data.clear(); await msg.reply_text('❌ Không thể thêm sản phẩm. Kiểm tra Logs.', reply_markup=ADMIN_KB)
         return
-    if flow == 'map_shophenry_id' and is_admin(update):
+    if flow == 'map_shopyuri_id' and is_admin(update):
         if not text.isdigit():
-            await msg.reply_text('ID ShopHenry phải là số. Nhập lại product_id:'); return
-        oid = context.user_data.get('shophenry_target_option')
+            await msg.reply_text('ID Shopyuri phải là số. Nhập lại product_id:'); return
+        oid = context.user_data.get('shopyuri_target_option')
         try:
-            with db() as con: con.execute('UPDATE product_options SET shophenry_product_id=? WHERE id=?', (text, oid))
-            context.user_data.clear(); await msg.reply_text(f'✅ Đã gán ID ShopHenry {text} cho gói sản phẩm.', reply_markup=ADMIN_KB)
+            with db() as con: con.execute('UPDATE product_options SET shopyuri_product_id=? WHERE id=?', (text, oid))
+            context.user_data.clear(); await msg.reply_text(f'✅ Đã gán ID Shopyuri {text} cho gói sản phẩm.', reply_markup=ADMIN_KB)
         except Exception:
-            log.exception('Map ShopHenry option failed'); context.user_data.clear()
-            await msg.reply_text('❌ Không thể gán ID ShopHenry. Kiểm tra Logs.', reply_markup=ADMIN_KB)
+            log.exception('Map Shopyuri option failed'); context.user_data.clear()
+            await msg.reply_text('❌ Không thể gán ID Shopyuri. Kiểm tra Logs.', reply_markup=ADMIN_KB)
         return
     if flow == 'user_check_id' and is_admin(update):
         with db() as con:
@@ -1918,24 +1936,40 @@ def api_me(request: Request):
 
 
 @web_app.get('/api/catalog')
-def api_catalog(request: Request):
+async def api_catalog(request: Request):
     user = _mini_user(request)
+    try:
+        await asyncio.to_thread(_sync_shopyuri_catalog, False)
+    except Exception as exc:
+        log.exception('Shopyuri catalog refresh failed')
+        # If this deployment has never synced Shopyuri, fail clearly rather than showing the old provider catalog.
+        with db() as check_con:
+            count = check_con.execute('SELECT COUNT(*) AS n FROM product_options WHERE shopyuri_product_id IS NOT NULL').fetchone()['n']
+        if not count:
+            raise HTTPException(status_code=502, detail=str(exc)[:1000])
+        log.warning('Using last successful Shopyuri catalog snapshot after refresh error: %s', exc)
     with db() as con:
-        cats = con.execute('SELECT id,name,guide_url,icon FROM categories ORDER BY id').fetchall()
+        cats = con.execute('''SELECT DISTINCT c.id,c.name,c.guide_url,c.icon
+            FROM categories c JOIN products p ON p.category_id=c.id
+            JOIN product_options po ON po.product_id=p.id
+            WHERE po.shopyuri_product_id IS NOT NULL ORDER BY c.id''').fetchall()
         output=[]
         seller = con.execute('SELECT is_seller FROM users WHERE user_id=?', (user['id'],)).fetchone()
         for cat in cats:
-            products = con.execute('SELECT id,name FROM products WHERE category_id=? ORDER BY id', (cat['id'],)).fetchall()
+            products = con.execute('''SELECT DISTINCT p.id,p.name FROM products p
+                JOIN product_options po ON po.product_id=p.id
+                WHERE p.category_id=? AND po.shopyuri_product_id IS NOT NULL ORDER BY p.id''', (cat['id'],)).fetchall()
             prod_out=[]
             for product in products:
                 opts=con.execute('''SELECT po.id,po.duration,po.duration_label,po.price,po.sell_price,
-                    po.shophenry_product_id,COUNT(pk.id) FILTER (WHERE pk.status='available') AS stock
+                    po.shopyuri_product_id,COUNT(pk.id) FILTER (WHERE pk.status='available') AS stock
                     FROM product_options po LEFT JOIN product_keys pk ON pk.option_id=po.id
-                    WHERE po.product_id=? GROUP BY po.id ORDER BY po.id''',(product['id'],)).fetchall()
+                    WHERE po.product_id=? AND po.shopyuri_product_id IS NOT NULL
+                    GROUP BY po.id ORDER BY po.id''',(product['id'],)).fetchall()
                 prod_out.append({'id':product['id'],'name':product['name'],'options':[{
                     'id':o['id'],'duration':o['duration'],'duration_label':o['duration_label'],
                     'price':int(o['sell_price'] if seller and seller['is_seller'] and o['sell_price'] else o['price']),
-                    'stock':int(o['stock']),'shophenry':bool(o['shophenry_product_id'])} for o in opts]})
+                    'stock':int(o['stock']),'shopyuri':True} for o in opts]})
             output.append({'id':cat['id'],'name':cat['name'],'guide_url':cat['guide_url'],
                            'icon':cat['icon'] or '', 'products':prod_out})
     return {'categories':output}
@@ -1946,81 +1980,15 @@ async def api_purchase(request: Request):
     user = _mini_user(request)
     payload = await request.json()
     raw_oid = str(payload.get('option_id') or '').strip()
-    is_direct_sh = raw_oid.startswith('sh_') or bool(payload.get('shophenry_product_id') and payload.get('keys_text'))
     try:
         qty = int(payload.get('quantity'))
         if qty < 1 or qty > 100:
             raise ValueError()
-        oid = None if is_direct_sh else int(raw_oid)
+        oid = int(raw_oid)
     except Exception:
         raise HTTPException(status_code=400, detail='Số lượng hoặc gói sản phẩm không hợp lệ.')
 
-    # Trường hợp Mini App đã gọi trực tiếp ShopHenry API và gửi kết quả về để trừ số dư & lưu lịch sử
-    if is_direct_sh:
-        try:
-            unit_price = max(0, int(payload.get('unit_price') or 0))
-            total = max(0, int(payload.get('total_price') or (unit_price * qty)))
-        except Exception:
-            raise HTTPException(status_code=400, detail='Giá đơn hàng không hợp lệ.')
-        category_name = str(payload.get('category_name') or 'Free Fire').strip()[:80]
-        product_name = str(payload.get('product_name') or 'Sản phẩm').strip()[:120]
-        duration_label = str(payload.get('duration_label') or '').strip()[:40]
-        key_text = str(payload.get('keys_text') or '').strip()
-        sh_pid = str(payload.get('shophenry_product_id') or raw_oid.replace('sh_', '', 1)).strip()
-        if not key_text:
-            raise HTTPException(status_code=400, detail='Thiếu dữ liệu key từ ShopHenry.')
-        con = db()
-        try:
-            con.execute('BEGIN')
-            u = con.execute('SELECT balance,is_locked FROM users WHERE user_id=? FOR UPDATE', (user['id'],)).fetchone()
-            if not u or u['is_locked']:
-                raise HTTPException(status_code=403, detail='Tài khoản không thể mua hàng.')
-            if u['balance'] < total:
-                raise HTTPException(status_code=400, detail=f'Số dư không đủ. Cần {total:,}đ, hiện có {u["balance"]:,}đ.')
-            con.execute('UPDATE users SET balance=balance-? WHERE user_id=?', (total, user['id']))
-            purchase_row = con.execute(
-                '''INSERT INTO purchases(user_id,category_name,product_name,duration_label,quantity,unit_price,total_price,keys_text,created_at,supplier_order_code)
-                   VALUES(?,?,?,?,?,?,?,?,?,?) RETURNING id''',
-                (user['id'], category_name, product_name, duration_label, qty, unit_price, total, key_text, now(), f'SH-{sh_pid}' if sh_pid else None)
-            ).fetchone()
-            purchase_id = int(purchase_row['id'])
-            con.commit()
-        except HTTPException:
-            con.rollback()
-            raise
-        except Exception:
-            con.rollback()
-            log.exception('Mini App direct ShopHenry record failed')
-            raise HTTPException(status_code=500, detail='Không thể lưu lịch sử đơn hàng.')
-        finally:
-            con.close()
-
-        guide_url = None
-        try:
-            with db() as guide_con:
-                guide_row = guide_con.execute('SELECT guide_url FROM categories WHERE LOWER(name)=LOWER(?) LIMIT 1', (category_name,)).fetchone()
-                guide_url = guide_row['guide_url'] if guide_row else None
-            telegram_text = (
-                "🎉 MUA HÀNG THÀNH CÔNG! 🎉\n\n"
-                f"🎮 Game: {escape(category_name)}\n📦 Sản phẩm: {escape(product_name)}{(' - ' + escape(duration_label)) if duration_label else ''}\n"
-                f"🔢 Số lượng: {qty}\n💰 Tổng tiền: {total:,}đ\n\n🔑 KEY CỦA BẠN:\n<pre>{escape(key_text)}</pre>"
-            )
-            await asyncio.to_thread(
-                _telegram_http,
-                'sendMessage',
-                {'chat_id': user['id'], 'text': telegram_text, 'parse_mode': 'HTML'},
-            )
-        except Exception:
-            log.exception('Could not send purchased keys to Telegram user %s', user['id'])
-
-        return {
-            'success': True, 'purchase_id': purchase_id, 'total': total, 'total_price': total,
-            'keys_text': key_text, 'category_name': category_name, 'product_name': product_name,
-            'duration_label': duration_label, 'quantity': qty, 'guide_url': guide_url,
-            'message': 'Mua hàng thành công.'
-        }
-
-    # Trường hợp mua gói sản phẩm nội bộ hoặc gói gán ShopHenry qua backend
+    # Trường hợp mua gói sản phẩm nội bộ hoặc gói gán Shopyuri qua backend
     supplier_order=''; key_text=''; con=db()
     try:
         con.execute('BEGIN')
@@ -2030,18 +1998,18 @@ async def api_purchase(request: Request):
         if not u or u['is_locked']: raise HTTPException(status_code=403,detail='Tài khoản không thể mua hàng.')
         if not opt: raise HTTPException(status_code=404,detail='Gói sản phẩm không tồn tại.')
         price=opt['sell_price'] if u['is_seller'] and opt['sell_price']>0 else opt['price']; total=int(price)*qty
-        external=bool(opt.get('shophenry_product_id'))
+        external=bool(opt.get('shopyuri_product_id'))
         if u['balance'] < total:
             raise HTTPException(status_code=400,detail=f'Số dư không đủ. Cần {total:,}đ, hiện có {u["balance"]:,}đ.')
         if external:
             try:
-                key_text,supplier_order=await asyncio.to_thread(shophenry_buy,opt['shophenry_product_id'],qty)
+                key_text,supplier_order=await asyncio.to_thread(shopyuri_buy,opt['shopyuri_product_id'],qty)
             except Exception as api_error:
-                log.warning('Mini App ShopHenry purchase failed for user=%s product=%s: %s',
-                            user['id'], opt['shophenry_product_id'], api_error)
+                log.warning('Mini App Shopyuri purchase failed for user=%s product=%s: %s',
+                            user['id'], opt['shopyuri_product_id'], api_error)
                 raise HTTPException(
                     status_code=502,
-                    detail='ShopHenry chưa xác nhận được đơn. Nếu API có thể đã tạo đơn, hãy kiểm tra mã đơn với admin trước khi mua lại.'
+                    detail='Shopyuri chưa xác nhận được đơn. Nếu API có thể đã tạo đơn, hãy kiểm tra mã đơn với admin trước khi mua lại.'
                 )
         else:
             keys=con.execute("SELECT id,key_value FROM product_keys WHERE option_id=? AND status='available' ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED",(oid,qty)).fetchall()
@@ -2146,7 +2114,7 @@ async def api_admin_overview(request: Request):
     with db() as con:
         cats=con.execute('SELECT id,name FROM categories ORDER BY id').fetchall()
         products=con.execute('SELECT p.id,p.name,p.category_id,c.name AS category_name FROM products p JOIN categories c ON c.id=p.category_id ORDER BY p.id').fetchall()
-        options=con.execute('SELECT po.id,po.product_id,po.duration_label,po.price,po.sell_price,po.shophenry_product_id,p.name AS product_name FROM product_options po JOIN products p ON p.id=po.product_id ORDER BY po.id').fetchall()
+        options=con.execute('SELECT po.id,po.product_id,po.duration_label,po.price,po.sell_price,po.shopyuri_product_id,p.name AS product_name FROM product_options po JOIN products p ON p.id=po.product_id ORDER BY po.id').fetchall()
         users=con.execute('SELECT COUNT(*) AS n FROM users').fetchone()['n']
         revenue=con.execute("SELECT COALESCE(SUM(amount),0) AS n FROM deposits WHERE status='approved'").fetchone()['n']
         balances=con.execute('SELECT COALESCE(SUM(balance),0) AS n FROM users').fetchone()['n']
@@ -2154,63 +2122,248 @@ async def api_admin_overview(request: Request):
     return {'categories':cats,'products':products,'options':options,'stats':{'users':users,'revenue':int(revenue),'balances':int(balances)},'maintenance':bool(maint and maint['setting_value']=='on')}
 
 
-def _extract_shophenry_catalog(payload):
-    '''Accept the common seller API response envelopes without assuming data is a list.'''
+def _extract_shopyuri_catalog(payload):
+    """Find a product/category array in common seller API response envelopes."""
     if isinstance(payload, list):
         return [x for x in payload if isinstance(x, dict)]
     if not isinstance(payload, dict):
         return []
-    for key in ('products', 'items', 'list', 'categories'):
+    for key in ('products', 'items', 'list', 'categories', 'data', 'result', 'response'):
         value = payload.get(key)
         if isinstance(value, list):
-            return [x for x in value if isinstance(x, dict)]
-    for key in ('data', 'result', 'response'):
-        value = payload.get(key)
-        if isinstance(value, list):
-            return [x for x in value if isinstance(x, dict)]
+            rows = [x for x in value if isinstance(x, dict)]
+            if rows:
+                return rows
         if isinstance(value, dict):
-            found = _extract_shophenry_catalog(value)
-            if found:
-                return found
+            rows = _extract_shopyuri_catalog(value)
+            if rows:
+                return rows
     return []
 
 
-def _request_shophenry_catalog():
-    if not SHOPHENRY_API_TOKEN:
-        raise RuntimeError('Thiếu biến SHOPHENRY_API_TOKEN trên Railway. Hãy thêm token ShopHenry vào Variables rồi redeploy.')
+def _shopyuri_get(obj, *keys, default=None):
+    if not isinstance(obj, dict):
+        return default
+    for key in keys:
+        value = obj.get(key)
+        if value not in (None, ''):
+            return value
+    return default
+
+
+def _normalize_shopyuri_catalog(items):
+    """Normalize nested categories or flat product rows into categories/products/options."""
+    grouped = {}
+
+    def add_option(category_name, category_icon, product_name, option, product_id_fallback=None):
+        supplier_id = _shopyuri_get(option, 'id', 'product_id', 'item_id', 'sku_id', default=product_id_fallback)
+        if supplier_id is None:
+            return
+        supplier_id = str(supplier_id).strip()
+        if not supplier_id.isdigit():
+            return
+        category_name = str(category_name or 'Sản phẩm').strip()[:80] or 'Sản phẩm'
+        product_name = str(product_name or _shopyuri_get(option, 'product_name', 'title', 'name', default='Sản phẩm')).strip()[:100]
+        duration = str(_shopyuri_get(option, 'duration_label', 'duration', 'period', 'time', 'package', default='1 ngày')).strip()[:40]
+        try:
+            price = max(0, int(float(_shopyuri_get(option, 'price', 'retail_price', 'selling_price', 'amount', 'original_price', default=0))))
+        except (TypeError, ValueError):
+            price = 0
+        category = grouped.setdefault(category_name, {
+            'name': category_name,
+            'icon': str(category_icon or ''),
+            'products_map': {}
+        })
+        product = category['products_map'].setdefault(product_name, {'name': product_name, 'options': []})
+        if not any(str(x['shopyuri_id']) == supplier_id for x in product['options']):
+            product['options'].append({
+                'shopyuri_id': supplier_id,
+                'duration_label': duration,
+                'price': price,
+            })
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        # Nested category format: {name/category, products:[...]}
+        nested_products = item.get('products')
+        if isinstance(nested_products, list):
+            cat_name = _shopyuri_get(item, 'name', 'category_name', 'title', default='Sản phẩm')
+            cat_icon = _shopyuri_get(item, 'icon', 'image', 'image_url', 'thumbnail', default='')
+            for product in nested_products:
+                if not isinstance(product, dict):
+                    continue
+                product_name = _shopyuri_get(product, 'name', 'title', 'product_name', default='Sản phẩm')
+                options = _shopyuri_get(product, 'options', 'variants', 'packages', 'durations')
+                if isinstance(options, list) and options:
+                    for option in options:
+                        add_option(cat_name, cat_icon, product_name, option,
+                                   _shopyuri_get(product, 'product_id', 'id'))
+                else:
+                    add_option(cat_name, cat_icon, product_name, product)
+            continue
+
+        # Flat product format.
+        cat_value = _shopyuri_get(item, 'category_name', 'category', 'group_name', 'category_title', default='Sản phẩm')
+        if isinstance(cat_value, dict):
+            cat_name = _shopyuri_get(cat_value, 'name', 'title', default='Sản phẩm')
+            cat_icon = _shopyuri_get(cat_value, 'icon', 'image', 'image_url', default='')
+        else:
+            cat_name = cat_value
+            cat_icon = _shopyuri_get(item, 'category_icon', 'icon', 'image', 'image_url', default='')
+        product_name = str(_shopyuri_get(item, 'product_name', 'name', 'title', default='Sản phẩm'))
+        flat_option = dict(item)
+        has_duration = _shopyuri_get(item, 'duration_label', 'duration', 'period', 'time', 'package') is not None
+        if not has_duration and ' - ' in product_name:
+            product_name, inferred_duration = [part.strip() for part in product_name.split(' - ', 1)]
+            flat_option['duration_label'] = inferred_duration
+        add_option(cat_name, cat_icon, product_name, flat_option)
+
+    result = []
+    for category in grouped.values():
+        products = []
+        for product in category['products_map'].values():
+            products.append({'name': product['name'], 'options': product['options']})
+        if products:
+            result.append({'name': category['name'], 'icon': category['icon'], 'products': products})
+    return result
+
+
+_SHOPYURI_SYNC_LOCK = threading.Lock()
+_SHOPYURI_LAST_SYNC = 0.0
+_SHOPYURI_LAST_ERROR = ''
+
+
+def _request_shopyuri_catalog():
+    if not SHOPYURI_API_TOKEN:
+        raise RuntimeError('Thiếu SHOPYURI_API_TOKEN trong Railway Variables.')
     errors = []
-    for action in ('products', 'list', 'categories', ''):
-        url = SHOPHENRY_API_URL + (('&' if '?' in SHOPHENRY_API_URL else '?') + f'action={action}' if action else '')
+    for action in ('products', 'list', 'categories', 'catalog', 'get_products', ''):
+        url = SHOPYURI_API_URL.split('?', 1)[0]
+        if action:
+            url += '?action=' + action
         req = urllib.request.Request(url, method='GET', headers={
-            'Authorization': f'Bearer {SHOPHENRY_API_TOKEN}',
+            'Authorization': f'Bearer {SHOPYURI_API_TOKEN}',
             'Accept': 'application/json',
             'User-Agent': 'HmeShopee-MiniApp/1.0',
         })
         try:
-            with urllib.request.urlopen(req, timeout=20) as response:
+            with urllib.request.urlopen(req, timeout=25) as response:
                 raw = response.read().decode('utf-8', errors='replace')
             payload = json.loads(raw)
-            items = _extract_shophenry_catalog(payload)
-            if items:
-                return items, action or 'default'
+            items = _extract_shopyuri_catalog(payload)
+            normalized = _normalize_shopyuri_catalog(items)
+            if normalized:
+                return normalized, action or 'default'
             message = payload.get('message') if isinstance(payload, dict) else ''
-            errors.append(f'{action or "default"}: API không có mảng products/items/categories' + (f' ({message})' if message else ''))
+            errors.append(f'{action or "default"}: không tìm thấy sản phẩm hợp lệ' + (f' ({message})' if message else ''))
         except urllib.error.HTTPError as exc:
-            body = exc.read().decode('utf-8', errors='replace')[:250]
+            body = exc.read().decode('utf-8', errors='replace')[:220]
             errors.append(f'{action or "default"}: HTTP {exc.code} {body}')
         except Exception as exc:
-            errors.append(f'{action or "default"}: {str(exc)[:250]}')
-    raise RuntimeError('Không đọc được danh sách sản phẩm ShopHenry. ' + ' | '.join(errors))
+            errors.append(f'{action or "default"}: {str(exc)[:220]}')
+    raise RuntimeError('Không lấy được danh sách sản phẩm Shopyuri. ' + ' | '.join(errors))
 
 
-@web_app.get('/api/admin/shophenry/catalog')
-async def api_admin_shophenry_catalog(request: Request):
+def _sync_shopyuri_catalog(force=False):
+    global _SHOPYURI_LAST_SYNC, _SHOPYURI_LAST_ERROR
+    with _SHOPYURI_SYNC_LOCK:
+        # Short cache avoids firing multiple supplier requests while users open the Mini App together.
+        if not force and _SHOPYURI_LAST_SYNC and time.time() - _SHOPYURI_LAST_SYNC < 45:
+            return {'synced': True, 'cached': True}
+        categories, action = _request_shopyuri_catalog()
+        supplier_ids = []
+        synced_products = 0
+        synced_options = 0
+        stamp = now()
+        with db() as con:
+            con.execute('BEGIN')
+            old_product_ids = [r['product_id'] for r in con.execute(
+                'SELECT DISTINCT product_id FROM product_options WHERE shophenry_product_id IS NOT NULL AND shopyuri_product_id IS NULL'
+            ).fetchall()]
+            # Remove old provider-mapped packages and their local stock; purchase history is independent and retained.
+            con.execute('DELETE FROM product_options WHERE shophenry_product_id IS NOT NULL AND shopyuri_product_id IS NULL')
+
+            for category in categories:
+                category_name = str(category.get('name') or 'Sản phẩm').strip()[:80]
+                if not category_name:
+                    continue
+                cat_row = con.execute(
+                    'INSERT INTO categories(name,created_by,created_at,icon) VALUES(?,?,?,?) '
+                    'ON CONFLICT(name) DO UPDATE SET icon=CASE WHEN EXCLUDED.icon IS NOT NULL AND EXCLUDED.icon<>\'\' THEN EXCLUDED.icon ELSE categories.icon END RETURNING id',
+                    (category_name, 0, stamp, str(category.get('icon') or ''))
+                ).fetchone()
+                cid = cat_row['id']
+                for product in category.get('products') or []:
+                    product_name = str(product.get('name') or 'Sản phẩm').strip()[:100]
+                    if not product_name:
+                        continue
+                    prod_row = con.execute(
+                        'SELECT id FROM products WHERE category_id=? AND LOWER(name)=LOWER(?) ORDER BY id LIMIT 1',
+                        (cid, product_name)
+                    ).fetchone()
+                    if prod_row:
+                        pid = prod_row['id']
+                    else:
+                        pid = con.execute(
+                            'INSERT INTO products(category_id,name,created_by,created_at) VALUES(?,?,?,?) RETURNING id',
+                            (cid, product_name, 0, stamp)
+                        ).fetchone()['id']
+                        synced_products += 1
+                    for option in product.get('options') or []:
+                        sid = str(option.get('shopyuri_id') or '').strip()
+                        if not sid.isdigit():
+                            continue
+                        supplier_ids.append(sid)
+                        label = str(option.get('duration_label') or '1 ngày').strip()[:40]
+                        price = max(0, int(option.get('price') or 0))
+                        existing = con.execute(
+                            'SELECT id FROM product_options WHERE shopyuri_product_id=? ORDER BY id LIMIT 1', (sid,)
+                        ).fetchone()
+                        duration_code = 'shopyuri_' + sid
+                        if existing:
+                            con.execute(
+                                'UPDATE product_options SET product_id=?,duration=?,duration_label=?,price=? WHERE id=?',
+                                (pid, duration_code, label, price, existing['id'])
+                            )
+                        else:
+                            con.execute(
+                                'INSERT INTO product_options(product_id,duration,duration_label,price,sell_price,shopyuri_product_id) VALUES(?,?,?,?,0,?)',
+                                (pid, duration_code, label, price, sid)
+                            )
+                        synced_options += 1
+
+            if not supplier_ids:
+                raise RuntimeError('API Shopyuri không trả về product_id dạng số; không thay đổi danh mục hiện tại.')
+            # Remove products no longer present in the new API, but leave purchases untouched.
+            current_ids = [r['shopyuri_product_id'] for r in con.execute(
+                'SELECT shopyuri_product_id FROM product_options WHERE shopyuri_product_id IS NOT NULL'
+            ).fetchall()]
+            stale = set(current_ids) - set(supplier_ids)
+            if stale:
+                stale_rows = con.execute(
+                    'SELECT id,product_id FROM product_options WHERE shopyuri_product_id = ANY(?)', (list(stale),)
+                ).fetchall()
+                stale_product_ids = {r['product_id'] for r in stale_rows}
+                con.execute('DELETE FROM product_options WHERE shopyuri_product_id = ANY(?)', (list(stale),))
+                old_product_ids.extend(stale_product_ids)
+            for pid in set(old_product_ids):
+                con.execute('DELETE FROM products WHERE id=? AND NOT EXISTS (SELECT 1 FROM product_options WHERE product_id=?)', (pid, pid))
+            con.commit()
+        _SHOPYURI_LAST_SYNC = time.time()
+        _SHOPYURI_LAST_ERROR = ''
+        return {'synced': True, 'cached': False, 'action': action,
+                'synced_products': synced_products, 'synced_options': synced_options}
+
+
+@web_app.get('/api/admin/shopyuri/catalog')
+async def api_admin_shopyuri_catalog(request: Request):
     _mini_user(request, True)
     try:
-        items, action = await asyncio.to_thread(_request_shophenry_catalog)
-        return {'success': True, 'items': items, 'action': action, 'count': len(items)}
+        result = await asyncio.to_thread(_sync_shopyuri_catalog, True)
+        return {'success': True, **result}
     except Exception as exc:
-        log.exception('ShopHenry catalog fetch failed')
+        log.exception('Shopyuri catalog sync failed')
         raise HTTPException(status_code=502, detail=str(exc)[:1200])
 
 
@@ -2222,73 +2375,6 @@ async def api_admin_action(request: Request):
     add_keys_result = None
     try:
         with db() as con:
-            if action=='sync_shophenry_catalog':
-                incoming=data.get('categories')
-                if not isinstance(incoming,list) or not incoming:
-                    raise HTTPException(status_code=400,detail='ShopHenry không trả về danh sách sản phẩm hợp lệ.')
-                synced_options=0
-                synced_products=0
-                stamp=now()
-                for category in incoming:
-                    if not isinstance(category,dict):
-                        continue
-                    category_name=str(category.get('name') or 'ShopHenry').strip()[:80]
-                    if not category_name:
-                        continue
-                    category_row=con.execute(
-                        'INSERT INTO categories(name,created_by,created_at,icon) VALUES(?,?,?,?) '
-                        'ON CONFLICT(name) DO UPDATE SET icon=CASE WHEN EXCLUDED.icon IS NOT NULL AND EXCLUDED.icon<>\'\' THEN EXCLUDED.icon ELSE categories.icon END '
-                        'RETURNING id',
-                        (category_name,admin['id'],stamp,str(category.get('icon') or ''))
-                    ).fetchone()
-                    cid=category_row['id']
-                    for product in category.get('products') or []:
-                        if not isinstance(product,dict):
-                            continue
-                        product_name=str(product.get('name') or 'Sản phẩm').strip()[:100]
-                        if not product_name:
-                            continue
-                        product_row=con.execute(
-                            'SELECT id FROM products WHERE category_id=? AND LOWER(name)=LOWER(?) ORDER BY id LIMIT 1',
-                            (cid,product_name)
-                        ).fetchone()
-                        if product_row:
-                            pid=product_row['id']
-                        else:
-                            pid=con.execute(
-                                'INSERT INTO products(category_id,name,created_by,created_at) VALUES(?,?,?,?) RETURNING id',
-                                (cid,product_name,admin['id'],stamp)
-                            ).fetchone()['id']
-                            synced_products += 1
-                        for option in product.get('options') or []:
-                            if not isinstance(option,dict):
-                                continue
-                            supplier_id=str(option.get('shophenry_id') or option.get('id') or '').strip()
-                            if not supplier_id.isdigit():
-                                continue
-                            duration_label=str(option.get('duration_label') or option.get('duration') or '1 ngày').strip()[:40]
-                            try:
-                                supplier_price=max(0,int(float(option.get('price') or 0)))
-                            except (TypeError,ValueError):
-                                supplier_price=0
-                            existing=con.execute(
-                                'SELECT id FROM product_options WHERE shophenry_product_id=? ORDER BY id LIMIT 1',
-                                (supplier_id,)
-                            ).fetchone()
-                            if existing:
-                                con.execute(
-                                    'UPDATE product_options SET product_id=?,duration=?,duration_label=?,price=? WHERE id=?',
-                                    (pid,'shophenry_'+supplier_id,duration_label,supplier_price,existing['id'])
-                                )
-                            else:
-                                con.execute(
-                                    'INSERT INTO product_options(product_id,duration,duration_label,price,sell_price,shophenry_product_id) VALUES(?,?,?,?,0,?)',
-                                    (pid,'shophenry_'+supplier_id,duration_label,supplier_price,supplier_id)
-                                )
-                            synced_options += 1
-                if not synced_options:
-                    raise HTTPException(status_code=400,detail='Không tìm thấy gói sản phẩm có ShopHenry product_id hợp lệ.')
-                return {'success':True,'message':f'Đã đồng bộ {synced_products} sản phẩm mới và {synced_options} gói từ ShopHenry.','synced_products':synced_products,'synced_options':synced_options}
             if action=='set_ff_app_icon':
                 image_data=str(data.get('image_data') or '')
                 if not image_data.startswith('data:image/') or len(image_data)>2_500_000:
@@ -2356,9 +2442,9 @@ async def api_admin_action(request: Request):
                 if not url.startswith(('https://','http://')): raise HTTPException(status_code=400,detail='Link phải bắt đầu bằng http:// hoặc https://')
                 con.execute('UPDATE categories SET guide_url=? WHERE id=?',(url,cid)); return {'success':True,'message':'Đã lưu link hướng dẫn.'}
             if action=='map_shop':
-                oid=int(data.get('option_id')); sid=str(data.get('shophenry_product_id','')).strip()
-                if not sid.isdigit(): raise HTTPException(status_code=400,detail='ShopHenry product ID phải là số.')
-                con.execute('UPDATE product_options SET shophenry_product_id=? WHERE id=?',(sid,oid)); return {'success':True,'message':'Đã gán ID ShopHenry.'}
+                oid=int(data.get('option_id')); sid=str(data.get('shopyuri_product_id','')).strip()
+                if not sid.isdigit(): raise HTTPException(status_code=400,detail='Shopyuri product ID phải là số.')
+                con.execute('UPDATE product_options SET shopyuri_product_id=? WHERE id=?',(sid,oid)); return {'success':True,'message':'Đã gán ID Shopyuri.'}
             if action in ('edit_price','edit_sell_price'):
                 oid=int(data.get('option_id')); price=int(data.get('price'))
                 if price<0: raise HTTPException(status_code=400,detail='Giá không được âm.')

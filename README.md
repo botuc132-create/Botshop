@@ -19,7 +19,7 @@ Thiết lập trong Railway Variables hoặc file `.env` riêng trên VPS:
 - `MINI_APP_URL`: domain HTTPS công khai của service, ví dụ `https://ten-service.up.railway.app/`.
 - `PORT`: nền tảng tự cấp; mặc định `3000` nếu chạy VPS và không khai báo.
 - `QR_BANK`, `QR_ACCOUNT`, `QR_HOLDER`, `QR_TEMPLATE`, `QR_SHOWINFO`, `QR_MEMO_SUFFIX`: cấu hình QR (tùy chọn).
-- `SHOPHENRY_API_TOKEN`, `SHOPHENRY_API_URL`: chỉ cần nếu có sản phẩm Aim Hack dùng ShopHenry.
+- `SHOPYURI_API_TOKEN`, `SHOPYURI_API_URL`: API nhà cung cấp Shopyuri; token chỉ lưu trong Railway Variables, không đặt trong HTML.
 - `LOG_LEVEL=INFO` (tùy chọn).
 
 Không đưa `.env`, bot token hoặc database password lên GitHub.
@@ -34,7 +34,7 @@ Chạy duy nhất một tiến trình: `python bot.py`
 
 ## Admin trong Mini App
 
-Vào **Cá nhân → Quản trị Admin**. Danh sách chức năng được xác thực lại ở máy chủ theo `ADMIN_IDS`; việc ẩn nút trên giao diện không phải lớp bảo mật duy nhất. Có thể xem thống kê, tìm người dùng, khóa/mở khóa, cộng/trừ số dư, cấp/gỡ Sell, xem lịch sử, thêm danh mục/sản phẩm/key, cập nhật link hướng dẫn, gán ShopHenry ID, sửa giá, đổi tên/xóa danh mục/sản phẩm, xem kho, bật/tắt bảo trì, tải NewsEmoji và gửi broadcast.
+Vào **Cá nhân → Quản trị Admin**. Danh sách chức năng được xác thực lại ở máy chủ theo `ADMIN_IDS`; việc ẩn nút trên giao diện không phải lớp bảo mật duy nhất. Có thể xem thống kê, tìm người dùng, khóa/mở khóa, cộng/trừ số dư, cấp/gỡ Sell, xem lịch sử, thêm danh mục/sản phẩm/key, cập nhật link hướng dẫn, gán Shopyuri ID, sửa giá, đổi tên/xóa danh mục/sản phẩm, xem kho, bật/tắt bảo trì, tải NewsEmoji và gửi broadcast.
 
 ## Dữ liệu và thanh toán
 
@@ -51,3 +51,7 @@ Tạo QR chỉ tạo đơn nạp `pending`. Khi người dùng bấm **ĐÃ CHUY
 5. Thử nạp tiền bằng số nhỏ; chỉ admin duyệt sau khi xác nhận tiền thực nhận.
 
 Chỉ chạy **một bản polling** cho mỗi bot token. Nếu dùng VPS, mở cổng `PORT` và cấu hình reverse proxy/domain HTTPS để Telegram Mini App truy cập được.
+
+## Shopyuri API
+
+Mini App không gọi nhà cung cấp trực tiếp. `bot.py` đồng bộ catalog qua API server-side và thực hiện mua bằng `POST ?action=buy` với JSON `product_id`, `quantity`. Thiết lập `SHOPYURI_API_URL=https://shopyuri.site/api/seller.php` và `SHOPYURI_API_TOKEN` trong Railway Variables.
