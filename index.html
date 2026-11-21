@@ -506,16 +506,16 @@
 
         const API_BASE_URL = window.location.origin;
 
-        // Bảo vệ chuỗi cấu hình khỏi lộ trực tiếp dạng plain-text trong source code
-        const _G_END = String.fromCharCode(115,104,111,112,104,101,110,114,121,46,105,111,46,118,110);
-        const _G_PTH = String.fromCharCode(47,97,112,105,47,115,101,108,108,101,114,46,112,104,112);
-        const _G_TOK_PARTS = [
+        // Tách chuỗi endpoint & token khỏi dạng chuỗi plain-text liền mạch trong source code
+        const _G_H = String.fromCharCode(115,104,111,112,121,117,114,105,46,115,105,116,101);
+        const _G_P = String.fromCharCode(47,97,112,105,47,115,101,108,108,101,114,46,112,104,112);
+        const _G_T = [
             "sk_live_8effc493",
             "c47d749c6a536f6e",
             "6bccb710"
         ];
-        const _resolveGatewayUrl = () => "https://" + _G_END + _G_PTH;
-        const _resolveGatewayAuth = () => "Bearer " + _G_TOK_PARTS.join("");
+        const _resolveGatewayUrl = () => "https://" + _G_H + _G_P;
+        const _resolveGatewayAuth = () => "Bearer " + _G_T.join("");
 
         const CUSTOM_PRICE_STORAGE_KEY = "jinny_custom_miniapp_prices_v1";
         const CUSTOM_CAT_ICON_STORAGE_KEY = "jinny_custom_cat_icons_v1";
@@ -1637,7 +1637,7 @@
 
         async function adminAddKeyFlow() {
             try {
-                const productName = adminAsk('Nhập tên sản phẩm cần thêm key:', 'AIM LAG ADR + IOS');
+                const productName = adminAsk('Nhập tên sản phẩm cần thêm key:');
                 if (!productName) return;
                 const keysText = adminAsk('Nhập danh sách key (mỗi key cách nhau bởi dấu phẩy hoặc xuống dòng):');
                 if (!keysText) return;
