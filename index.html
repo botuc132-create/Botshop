@@ -687,23 +687,8 @@
         }
 
         function applyCustomPricesToCatalog(sourceCats) {
-            return (sourceCats || []).map(cat => ({
-                ...cat,
-                icon: cat.icon || getCustomCatIcon(cat.name),
-                products: (cat.products || []).map(prod => ({
-                    ...prod,
-                    options: (prod.options || []).map(opt => {
-                        const basePrice = Number(opt._base_price ?? opt.price ?? 0);
-                        const customPrice = getEffectivePrice(cat.name, prod.name, opt, basePrice);
-                        return {
-                            ...opt,
-                            _base_price: basePrice,
-                            _has_custom_price: customPrice !== basePrice,
-                            price: customPrice
-                        };
-                    })
-                }))
-            }));
+            // Giá được backend đọc từ database dùng chung với bot Telegram.
+            return (sourceCats || []).map(cat => ({...cat, products:(cat.products || []).map(prod => ({...prod, options:(prod.options || []).map(opt => ({...opt}))}))}));
         }
 
         async function apiRequest(path, options = {}) {
@@ -853,8 +838,8 @@
             window.scrollTo(0, 0);
         }
 
-        async function fetchShopyuriCatalog() {
-            const data = await apiRequest('/api/catalog');
+        async function fetchShopyuriCatalog(force = false) {
+            const data = await apiRequest('/api/catalog' + (force ? '?refresh=1' : ''));
             return Array.isArray(data?.categories) ? data.categories : [];
         }
 
@@ -862,7 +847,7 @@
         async function loadCatalog(options = {}) {
             try {
                 setLoadingProgress(Math.max(loadingProgressVal, 35), 'ĐANG ĐỒNG BỘ SẢN PHẨM SHOPYURI...');
-                const syncedCats = await fetchShopyuriCatalog();
+                const syncedCats = await fetchShopyuriCatalog(!!options.force);
                 setLoadingProgress(Math.max(loadingProgressVal, 82), 'ĐANG XỬ LÝ GÓI & GIÁ...');
                 rawSyncedCategories = syncedCats;
                 categoriesData = applyCustomPricesToCatalog(rawSyncedCategories);
@@ -1015,7 +1000,7 @@ function renderCategoryIconPreview(catName) {
 
             flatProducts.forEach(({ categoryName, product }) => {
                 const opts = product.options || [];
-                const customCount = opts.filter(o => o._has_custom_price).length;
+                const customCount = opts.filter(o => Number(o.sell_price || 0) > 0).length;
 
                 const row = document.createElement('div');
                 row.className = 'category-option-item';
@@ -1026,7 +1011,7 @@ function renderCategoryIconPreview(catName) {
                         <h5 style="margin:0; font-size:13px; font-weight:800; color:#fff;">${product.name}</h5>
                         <p style="margin:3px 0 0 0; font-size:10px; color:var(--text-sub);">
                             Mục: ${categoryName} · ${opts.length} gói thời hạn
-                            ${customCount > 0 ? `· <span style="color:#00e5a8;">Đã chỉnh ${customCount} giá riêng</span>` : ''}
+                            ${customCount > 0 ? `· <span style="color:#00e5a8;">Đã đặt ${customCount} giá Sell</span>` : ''}
                         </p>
                     </div>
                     <span style="color:#00e5a8; font-size:14px; font-weight:800; margin-left:10px;">Đổi giá ›</span>
@@ -1062,8 +1047,8 @@ function renderCategoryIconPreview(catName) {
 
             (prod.options || []).forEach(opt => {
                 const durLabel = fullDurationLabel(opt.duration_label || opt.duration);
-                const currentPrice = Number(opt.price || 0);
-                const basePrice = Number(opt._base_price ?? currentPrice);
+                const currentPrice = Number(opt.sell_price || 0);
+                const basePrice = Number(opt.regular_price ?? opt.price ?? 0);
                 const diff = currentPrice - basePrice;
 
                 const card = document.createElement('div');
@@ -1081,7 +1066,7 @@ function renderCategoryIconPreview(catName) {
                     <div style="min-width:0; flex-grow:1;">
                         <h5 style="margin:0; font-size:13px; font-weight:800; color:#fff;">${durLabel}</h5>
                         <p style="margin:3px 0 0 0; font-size:10px; color:var(--text-sub);">
-                            Giá chuẩn: ${basePrice.toLocaleString('vi-VN')}đ · ${badgeText} · Kho: ${opt.stock}
+                            Giá thường: ${basePrice.toLocaleString('vi-VN')}đ · ${badgeText} · Kho còn: ${Number(opt.stock || 0)} key
                         </p>
                     </div>
                     <div style="text-align:right; margin-left:10px;">
@@ -1093,16 +1078,16 @@ function renderCategoryIconPreview(catName) {
             });
         }
 
-        function editSingleCustomPrice(categoryName, productName, opt) {
+        async function editSingleCustomPrice(categoryName, productName, opt) {
             const durLabel = fullDurationLabel(opt.duration_label || opt.duration);
-            const currentPrice = Number(opt.price || 0);
-            const basePrice = Number(opt._base_price ?? currentPrice);
+            const currentPrice = Number(opt.sell_price || 0);
+            const basePrice = Number(opt.regular_price ?? opt.price ?? 0);
 
             const input = prompt(
                 `Sửa giá bán riêng cho: ${productName} – ${durLabel}\n` +
-                `Giá hiện tại trên Mini App: ${currentPrice.toLocaleString('vi-VN')}đ\n` +
+                `Giá Sell hiện tại: ${currentPrice.toLocaleString('vi-VN')}đ\n` +
                 `Giá tham chiếu ban đầu: ${basePrice.toLocaleString('vi-VN')}đ\n\n` +
-                `Nhập giá bán mới (VNĐ) hoặc nhập "reset" để về giá ban đầu:`,
+                `Nhập giá Sell mới (VNĐ). Nhập 0 để tắt giá Sell:`,
                 String(currentPrice)
             );
 
@@ -1110,27 +1095,18 @@ function renderCategoryIconPreview(catName) {
             const trimmed = input.trim();
             if (!trimmed) return;
 
-            if (trimmed.toLowerCase() === 'reset') {
-                resetCustomPriceForOption(categoryName, productName, opt);
-                tg.showAlert(`Đã khôi phục giá mặc định cho ${productName} – ${durLabel}.`);
-            } else {
-                const parsedPrice = Number(trimmed.replace(/[^\d]/g, ''));
-                if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
-                    tg.showAlert('Giá nhập không hợp lệ. Vui lòng nhập số VNĐ lớn hơn 0.');
-                    return;
-                }
-                setCustomPriceForOption(categoryName, productName, opt, parsedPrice);
-                tg.showAlert(
-                    `Đã cập nhật giá bán riêng:\n${productName} – ${durLabel}: ${parsedPrice.toLocaleString('vi-VN')}đ\n` +
-                    `(Chỉ áp dụng trên Mini App / Bot của bạn)`
-                );
+            const parsedPrice = Number(trimmed.replace(/[^\d]/g, ''));
+            if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+                tg.showAlert('Giá nhập không hợp lệ.');
+                return;
             }
-
-            categoriesData = applyCustomPricesToCatalog(rawSyncedCategories);
-            if (selectedCategory?.name) {
-                chooseCategory(selectedCategory.name, { preserveSelection: true });
-            }
-            openCustomPriceDurationModal(categoryName, productName);
+            try {
+                await adminApi('edit_sell_price', { option_id: Number(opt.id), price: parsedPrice });
+                await loadCatalog({force:true});
+                tg.showAlert(parsedPrice === 0 ? 'Đã tắt giá Sell.' : 'Đã cập nhật giá Sell trong database; bot và Mini App dùng chung giá này.');
+                openCustomPriceProductModal();
+                openCustomPriceDurationModal(categoryName, productName);
+            } catch (err) { tg.showAlert(err.message || 'Không thể cập nhật giá Sell.'); }
         }
 
         function closePriceModal(event) {
@@ -1181,11 +1157,8 @@ function renderCategoryIconPreview(catName) {
                     
                     const stock = document.createElement('p');
                     const hasSupplierStock = option.stock !== null && option.stock !== undefined && option.stock !== '';
-                    stock.textContent = option.stock_source === 'shopyuri'
-                        ? (hasSupplierStock ? ('Kho Shopyuri: ' + Number(option.stock)) : 'Kho: Shopyuri')
-                        : ('Kho còn: ' + Number(option.stock || 0));
-                    stock.style.color = !hasSupplierStock && option.stock_source === 'shopyuri'
-                        ? '#22c55e' : (Number(option.stock) > 0 ? '#22c55e' : '#ff4d4f');
+                    stock.textContent = 'Kho còn: ' + (hasSupplierStock ? Number(option.stock) : 0) + ' key';
+                    stock.style.color = Number(option.stock) > 0 ? '#22c55e' : '#ff4d4f';
                     stock.style.fontWeight = '800';
                     
                     info.append(name, stock);
@@ -1299,7 +1272,7 @@ function renderCategoryIconPreview(catName) {
             }
             const total = selectedPkgPrice * currentQty;
             if (currentUserBalance < total) {
-                tg.showAlert(`Số dư không đủ. Cần ${total.toLocaleString('vi-VN')}đ, hiện có ${currentUserBalance.toLocaleString('vi-VN')}đ.`);
+                tg.showAlert('⚠️ Hệ thống đang gặp sự cố xử lý đơn hàng. Vui lòng chờ một chút hoặc nhắn tin Admin để được hỗ trợ.');
                 return;
             }
 

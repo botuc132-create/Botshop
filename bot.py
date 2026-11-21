@@ -399,7 +399,7 @@ async def show_category(q, category_id, user_id):
     if not cat: await q.edit_message_text('Danh mục không còn tồn tại.'); return
     rows = []
     for o in opts:
-        src_str = 'Shopyuri' if o.get('shopyuri_product_id') else f"Kho: {stock_for_option(o['id'])}"
+        src_str = f"Kho còn: {int(o.get('shopyuri_stock') or 0)}" if o.get('shopyuri_product_id') else f"Kho còn: {stock_for_option(o['id'])}"
             
         current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
         btn_text = f"{o['product_name']} - {o['duration_label']} — {current_price:,}đ [{src_str}]"
@@ -426,7 +426,7 @@ async def show_quantity(q, option_id, context, user_id):
         [quick_button('Mua số lượng khác',callback_data=f'shop:qty:{option_id}:other')],
         [InlineKeyboardButton('📂 Quay Lại',callback_data=f"shop:cat:{o['category_id']}")]
     ]
-    src_text = 'Shopyuri' if o.get('shopyuri_product_id') else f"Kho: {stock_for_option(option_id)}"
+    src_text = f"Kho còn: {int(o.get('shopyuri_stock') or 0)} key" if o.get('shopyuri_product_id') else f"Kho còn: {stock_for_option(option_id)} key"
 
     await q.edit_message_text(
         f"🛒 {escape(o['product_name'])}\n⏳ {escape(o['duration_label'])}"
@@ -585,7 +585,7 @@ async def do_purchase(q, update, context):
         if user['balance'] < total:
             con.rollback()
             await q.edit_message_text(
-                f"❌ Số dư không đủ.\nCần: {total:,}đ\nHiện có: {user['balance']:,}đ"
+                '⚠️ Hệ thống đang gặp sự cố xử lý đơn hàng. Vui lòng chờ một chút hoặc nhắn tin Admin để được hỗ trợ.'
             )
             return
 
@@ -599,11 +599,7 @@ async def do_purchase(q, update, context):
                 con.rollback()
                 log.warning('Shopyuri purchase failed for user=%s product=%s: %s',
                             uid, opt['shopyuri_product_id'], api_error)
-                await q.edit_message_text(
-                    '❌ Shopyuri không xác nhận được đơn.\n'
-                    + str(api_error)[:700]
-                    + '\n\nNếu API báo lỗi sau khi tạo đơn, đừng mua lại ngay; hãy gửi mã đơn cho admin kiểm tra.'
-                )
+                await q.edit_message_text('⚠️ Hệ thống đang gặp sự cố xử lý đơn hàng. Vui lòng chờ một chút hoặc nhắn tin Admin để được hỗ trợ. Không tự mua lại nếu đơn trước chưa được Admin kiểm tra.')
                 return
         else:
             keys = con.execute(
@@ -1978,8 +1974,9 @@ def _build_shopyuri_catalog_for_user(user_id):
                 prod_out.append({'id':product['id'],'name':product['name'],'options':[{
                     'id':o['id'],'duration':o['duration'],'duration_label':o['duration_label'],
                     'price':int(o['sell_price'] if seller and seller['is_seller'] and o['sell_price'] else o['price']),
-                    'stock':int(o['shopyuri_stock']) if o['shopyuri_stock'] is not None else None,
-                    'stock_source':'shopyuri','shopyuri':True,
+                    'stock':int(o['shopyuri_stock']) if o['shopyuri_stock'] is not None else 0,
+                    'stock_source':'supplier','regular_price':int(o['price'] or 0),
+                    'sell_price':int(o['sell_price'] or 0),'shopyuri':True,
                     'shopyuri_product_id':str(o['shopyuri_product_id'])} for o in opts]})
             output.append({'id':cat['id'],'name':cat['name'],'guide_url':cat['guide_url'],
                            'icon':cat['icon'] or '', 'products':prod_out})
@@ -2047,7 +2044,7 @@ async def api_purchase(request: Request):
         if external and not actual_supplier_id.isdigit():
             raise HTTPException(status_code=409, detail='Gói sản phẩm chưa có ID Shopyuri hợp lệ. Hãy đồng bộ lại danh sách.')
         if u['balance'] < total:
-            raise HTTPException(status_code=400,detail=f'Số dư không đủ. Cần {total:,}đ, hiện có {u["balance"]:,}đ.')
+            raise HTTPException(status_code=400,detail='⚠️ Hệ thống đang gặp sự cố xử lý đơn hàng. Vui lòng chờ một chút hoặc nhắn tin Admin để được hỗ trợ.')
         if external:
             try:
                 log.info('Mini App purchase: user=%s option_id=%s supplier_product_id=%s qty=%s', user['id'], oid, actual_supplier_id, qty)
@@ -2057,8 +2054,7 @@ async def api_purchase(request: Request):
                             user['id'], opt['shopyuri_product_id'], api_error)
                 raise HTTPException(
                     status_code=502,
-                    detail='Shopyuri chưa xác nhận được đơn: ' + str(api_error)[:700]
-                    + '. Không gửi lại đơn tự động; hãy kiểm tra với Admin trước khi mua lại.'
+                    detail='⚠️ Hệ thống đang gặp sự cố xử lý đơn hàng. Vui lòng chờ một chút hoặc nhắn tin Admin để được hỗ trợ. Không tự mua lại nếu đơn trước chưa được Admin kiểm tra.'
                 )
         else:
             keys=con.execute("SELECT id,key_value FROM product_keys WHERE option_id=? AND status='available' ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED",(oid,qty)).fetchall()
