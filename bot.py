@@ -10,6 +10,7 @@ import time
 import threading
 from urllib.parse import parse_qsl
 import urllib.request
+import requests
 import urllib.error
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -35,7 +36,7 @@ from telegram.ext import (
 
 DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
 BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
-SHOPYURI_API_TOKEN = os.getenv('SHOPYURI_API_TOKEN', '').strip()
+SHOPYURI_API_TOKEN = ''.join(os.getenv('SHOPYURI_API_TOKEN', '').split())
 SHOPYURI_API_URL = os.getenv('SHOPYURI_API_URL', 'https://shopyuri.site/api/seller.php').strip()
 ADMIN_IDS = {int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip().isdigit()}
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
@@ -456,67 +457,86 @@ async def show_confirm(q, option_id, qty, context, user_id):
     )
 
 def shopyuri_buy(product_id, quantity):
-    """Buy keys from Shopyuri. The API token is never exposed to the Mini App."""
+    """Mua key qua Shopyuri; token chỉ được đọc từ biến môi trường Railway."""
     if not SHOPYURI_API_TOKEN:
-        raise RuntimeError('Thiếu SHOPYURI_API_TOKEN trong biến môi trường Railway.')
+        raise RuntimeError('Thiếu SHOPYURI_API_TOKEN trong Railway Variables.')
+
     try:
         product_id = int(product_id)
         quantity = int(quantity)
     except (TypeError, ValueError):
         raise RuntimeError('Shopyuri product_id hoặc quantity không hợp lệ.')
+
     if product_id <= 0 or quantity < 1 or quantity > 100:
         raise RuntimeError('Shopyuri product_id hoặc quantity nằm ngoài giới hạn.')
 
     url = SHOPYURI_API_URL.split('?', 1)[0] + '?action=buy'
-    body = json.dumps({'product_id': product_id, 'quantity': quantity}).encode('utf-8')
-    req = urllib.request.Request(
-        url, data=body, method='POST',
-        headers={
-            'Authorization': f'Bearer {SHOPYURI_API_TOKEN}',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-        },
-    )
+    headers = {
+        'Authorization': f'Bearer {SHOPYURI_API_TOKEN}',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': 'HmeShopee/1.0',
+    }
+    payload = {'product_id': product_id, 'quantity': quantity}
+
     try:
-        with urllib.request.urlopen(req, timeout=35) as response:
-            raw = response.read().decode('utf-8', errors='replace')
-            payload = json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode('utf-8', errors='replace')[:1000]
-        try:
-            error_payload = json.loads(raw)
-        except Exception:
-            raise RuntimeError(f'Shopyuri trả HTTP {exc.code}.')
-        message = error_payload.get('message') or error_payload.get('error') or f'Shopyuri từ chối đơn (HTTP {exc.code}).'
-        raise RuntimeError(str(message))
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f'Không kết nối được Shopyuri: {exc.reason}')
+        response = requests.post(url, json=payload, headers=headers, timeout=35)
+    except requests.RequestException as exc:
+        raise RuntimeError(f'Không kết nối được Shopyuri: {exc}')
 
-    if not isinstance(payload, dict):
-        raise RuntimeError('Shopyuri trả về dữ liệu không hợp lệ.')
-    success = payload.get('success') is True or str(payload.get('status', '')).lower() in ('success', 'ok', 'completed')
+    try:
+        result = response.json()
+    except ValueError:
+        result = {}
+
+    if response.status_code >= 400:
+        # Keep the upstream reason visible; HTTP 403 can be caused by token permissions,
+        # IP restrictions, or an invalid supplier product mapping and cannot be bypassed locally.
+        detail = ''
+        if isinstance(result, dict):
+            detail = str(result.get('message') or result.get('error') or result.get('detail') or '').strip()
+        if not detail:
+            detail = (response.text or '').strip()[:700]
+        if not detail:
+            detail = 'Nhà cung cấp không trả nội dung giải thích.'
+        raise RuntimeError(f'Shopyuri trả HTTP {response.status_code}: {detail}')
+
+    if not isinstance(result, dict):
+        raise RuntimeError('Shopyuri trả về dữ liệu JSON không hợp lệ.')
+
+    success = (
+        result.get('success') is True
+        or str(result.get('status', '')).lower() in ('success', 'ok', 'completed')
+    )
     if not success:
-        raise RuntimeError(str(payload.get('message') or payload.get('error') or 'Shopyuri không xác nhận đơn hàng.'))
+        detail = result.get('message') or result.get('error') or result.get('detail')
+        raise RuntimeError(str(detail or 'Shopyuri không xác nhận đơn hàng.'))
 
-    data = payload.get('data') if isinstance(payload.get('data'), dict) else payload
-    raw_keys = (data.get('keys') or data.get('key') or data.get('key_list') or
-                data.get('license_keys') or payload.get('keys') or payload.get('key'))
+    data = result.get('data') if isinstance(result.get('data'), dict) else result
+    raw_keys = (
+        data.get('keys') or data.get('key') or data.get('key_list')
+        or data.get('license_keys') or result.get('keys') or result.get('key')
+    )
     if isinstance(raw_keys, list):
-        keys = [str(x).strip() for x in raw_keys if str(x).strip()]
+        keys = [str(item).strip() for item in raw_keys if str(item).strip()]
     elif isinstance(raw_keys, str):
-        keys = [line.strip() for line in raw_keys.replace('\r', '').split('\n') if line.strip()]
+        keys = [line.strip() for line in raw_keys.replace('\\r', '').split('\\n') if line.strip()]
         if len(keys) == 1 and quantity > 1 and ' | ' in keys[0]:
-            keys = [x.strip() for x in keys[0].split(' | ') if x.strip()]
+            keys = [item.strip() for item in keys[0].split(' | ') if item.strip()]
     else:
         keys = []
-    order_code = str(data.get('order_code') or data.get('order_id') or data.get('transaction_id') or '')
+
+    order_code = str(
+        data.get('order_code') or data.get('order_id')
+        or data.get('transaction_id') or ''
+    )
     if len(keys) != quantity:
         raise RuntimeError(
             'Shopyuri báo thành công nhưng số key trả về không khớp số lượng. '
             + (f'Mã đơn: {order_code}. ' if order_code else '')
             + 'Bot chưa trừ số dư; Admin cần kiểm tra đơn trên nhà cung cấp trước khi mua lại.'
         )
-    return '\n'.join(keys), order_code
+    return '\\n'.join(keys), order_code
 
 async def do_purchase(q, update, context):
     if not q.message or q.message.chat.type != 'private':
@@ -2009,7 +2029,8 @@ async def api_purchase(request: Request):
                             user['id'], opt['shopyuri_product_id'], api_error)
                 raise HTTPException(
                     status_code=502,
-                    detail='Shopyuri chưa xác nhận được đơn. Nếu API có thể đã tạo đơn, hãy kiểm tra mã đơn với admin trước khi mua lại.'
+                    detail='Shopyuri chưa xác nhận được đơn: ' + str(api_error)[:700]
+                    + '. Không gửi lại đơn tự động; hãy kiểm tra với Admin trước khi mua lại.'
                 )
         else:
             keys=con.execute("SELECT id,key_value FROM product_keys WHERE option_id=? AND status='available' ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED",(oid,qty)).fetchall()
@@ -2156,7 +2177,9 @@ def _normalize_shopyuri_catalog(items):
     grouped = {}
 
     def add_option(category_name, category_icon, product_name, option, product_id_fallback=None):
-        supplier_id = _shopyuri_get(option, 'id', 'product_id', 'item_id', 'sku_id', default=product_id_fallback)
+        supplier_id = _shopyuri_get(option, 'product_id', 'item_id', 'sku_id', default=product_id_fallback)
+        if supplier_id is None:
+            supplier_id = _shopyuri_get(option, 'id', default=product_id_fallback)
         if supplier_id is None:
             return
         supplier_id = str(supplier_id).strip()

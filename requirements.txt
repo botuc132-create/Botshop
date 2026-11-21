@@ -4,3 +4,4 @@ psycopg[binary]==3.2.9
 psycopg-pool==3.2.6
 fastapi==0.115.12
 uvicorn[standard]==0.34.0
+requests==2.32.4
