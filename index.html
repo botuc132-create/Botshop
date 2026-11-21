@@ -889,6 +889,50 @@
             }
         }
 
+        function renderCategoriesList() {
+            let listContainer = document.getElementById('category-options-list');
+            listContainer.innerHTML = '';
+
+            categoriesData.forEach(cat => {
+                let item = document.createElement('div');
+                item.className = 'category-option-item';
+                item.innerHTML = `
+                    <div style="display:flex; align-items:center; gap:12px; width:100%;" onclick="chooseCategory('${cat.name}'); closeCategoryModal();">
+                        ${cat.icon ? `<img src="${cat.icon}" alt="" style="width:38px;height:38px;object-fit:cover;border-radius:10px;">` : '<div style="width:38px;height:38px;background:#0d2847;border-radius:10px;display:flex;justify-content:center;align-items:center;color:var(--accent-blue);font-weight:bold;">FF</div>'}
+                        <div style="flex-grow:1;">
+                            <h5 style="margin:0; font-size:13px; font-weight:750; color:white;">${cat.name}</h5>
+                            <p style="margin:2px 0 0 0; font-size:10px; color:var(--text-sub);">Nhấn để chọn danh mục</p>
+                        </div>
+                        <button onclick="event.stopPropagation(); deleteCategoryPrompt('${cat.name}', ${cat.id})" style="background:#3d1518; border:1px solid #7d262d; color:#ff6677; font-size:10px; font-weight:700; padding:6px 10px; border-radius:8px; cursor:pointer;">🗑 Xóa mục</button>
+                    </div>
+                `;
+                listContainer.appendChild(item);
+            });
+        }
+
+        async function deleteCategoryPrompt(catName, catId) {
+            if (!confirm(`Bạn có chắc chắn muốn xóa mục [${catName}] không?`)) return;
+            try {
+                const result = await adminApi('delete_category', { id: Number(catId) });
+                await loadCatalog({force:true});
+                closeCategoryModal();
+                tg.showAlert(result.message || `Đã xóa mục [${catName}] thành công!`);
+            } catch(e) {
+                tg.showAlert('Không thể xóa mục: ' + e.message);
+            }
+        }
+
+        function openCategoryModal() {
+            renderCategoriesList();
+            tg.HapticFeedback?.impactOccurred('light');
+            document.getElementById('category-modal').classList.add('open');
+        }
+
+        function closeCategoryModal() {
+            document.getElementById('category-modal').classList.remove('open');
+        }
+
+
         function getAllSyncedProductsFlat() {
             const items = [];
             (categoriesData || []).forEach(cat => {
