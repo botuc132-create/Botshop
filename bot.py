@@ -206,6 +206,7 @@ def init_db():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_seller BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE product_options ADD COLUMN IF NOT EXISTS shophenry_product_id TEXT",  # legacy column retained for safe DB migration
         "ALTER TABLE product_options ADD COLUMN IF NOT EXISTS shopyuri_product_id TEXT",
+        "ALTER TABLE product_options ADD COLUMN IF NOT EXISTS shopyuri_stock BIGINT",
         "ALTER TABLE product_options ADD COLUMN IF NOT EXISTS sell_price BIGINT NOT NULL DEFAULT 0",
         "ALTER TABLE purchases ADD COLUMN IF NOT EXISTS supplier_order_code TEXT",
         "ALTER TABLE categories ADD COLUMN IF NOT EXISTS guide_url TEXT",
@@ -1955,26 +1956,14 @@ def api_me(request: Request):
             'deposits': deposits, 'purchases': purchases}
 
 
-@web_app.get('/api/catalog')
-async def api_catalog(request: Request):
-    user = _mini_user(request)
-    try:
-        await asyncio.to_thread(_sync_shopyuri_catalog, False)
-    except Exception as exc:
-        log.exception('Shopyuri catalog refresh failed')
-        # If this deployment has never synced Shopyuri, fail clearly rather than showing the old provider catalog.
-        with db() as check_con:
-            count = check_con.execute('SELECT COUNT(*) AS n FROM product_options WHERE shopyuri_product_id IS NOT NULL').fetchone()['n']
-        if not count:
-            raise HTTPException(status_code=502, detail=str(exc)[:1000])
-        log.warning('Using last successful Shopyuri catalog snapshot after refresh error: %s', exc)
+def _build_shopyuri_catalog_for_user(user_id):
     with db() as con:
         cats = con.execute('''SELECT DISTINCT c.id,c.name,c.guide_url,c.icon
             FROM categories c JOIN products p ON p.category_id=c.id
             JOIN product_options po ON po.product_id=p.id
             WHERE po.shopyuri_product_id IS NOT NULL ORDER BY c.id''').fetchall()
         output=[]
-        seller = con.execute('SELECT is_seller FROM users WHERE user_id=?', (user['id'],)).fetchone()
+        seller = con.execute('SELECT is_seller FROM users WHERE user_id=?', (user_id,)).fetchone()
         for cat in cats:
             products = con.execute('''SELECT DISTINCT p.id,p.name FROM products p
                 JOIN product_options po ON po.product_id=p.id
@@ -1982,17 +1971,50 @@ async def api_catalog(request: Request):
             prod_out=[]
             for product in products:
                 opts=con.execute('''SELECT po.id,po.duration,po.duration_label,po.price,po.sell_price,
-                    po.shopyuri_product_id,COUNT(pk.id) FILTER (WHERE pk.status='available') AS stock
-                    FROM product_options po LEFT JOIN product_keys pk ON pk.option_id=po.id
+                    po.shopyuri_product_id,po.shopyuri_stock
+                    FROM product_options po
                     WHERE po.product_id=? AND po.shopyuri_product_id IS NOT NULL
-                    GROUP BY po.id ORDER BY po.id''',(product['id'],)).fetchall()
+                    ORDER BY po.id''',(product['id'],)).fetchall()
                 prod_out.append({'id':product['id'],'name':product['name'],'options':[{
                     'id':o['id'],'duration':o['duration'],'duration_label':o['duration_label'],
                     'price':int(o['sell_price'] if seller and seller['is_seller'] and o['sell_price'] else o['price']),
-                    'stock':int(o['stock']),'shopyuri':True} for o in opts]})
+                    'stock':int(o['shopyuri_stock']) if o['shopyuri_stock'] is not None else None,
+                    'stock_source':'shopyuri','shopyuri':True,
+                    'shopyuri_product_id':str(o['shopyuri_product_id'])} for o in opts]})
             output.append({'id':cat['id'],'name':cat['name'],'guide_url':cat['guide_url'],
                            'icon':cat['icon'] or '', 'products':prod_out})
-    return {'categories':output}
+    return output
+
+
+async def _refresh_shopyuri_catalog_background():
+    try:
+        await asyncio.to_thread(_sync_shopyuri_catalog, False)
+    except Exception:
+        log.exception('Background Shopyuri catalog refresh failed')
+
+
+@web_app.get('/api/catalog')
+async def api_catalog(request: Request):
+    user = _mini_user(request)
+    # Serve the last successful database snapshot immediately. This makes the Mini App
+    # open quickly; the provider refresh continues in the background.
+    cached = await asyncio.to_thread(_build_shopyuri_catalog_for_user, user['id'])
+    has_snapshot = any(cat.get('products') for cat in cached)
+    force = request.query_params.get('refresh') == '1'
+    if has_snapshot and not force:
+        if not _SHOPYURI_LAST_SYNC or time.time() - _SHOPYURI_LAST_SYNC >= 45:
+            asyncio.create_task(_refresh_shopyuri_catalog_background())
+        return {'categories': cached, 'cached': True, 'refreshing': True}
+
+    try:
+        await asyncio.to_thread(_sync_shopyuri_catalog, force or not has_snapshot)
+    except Exception as exc:
+        log.exception('Shopyuri catalog refresh failed')
+        if not has_snapshot:
+            raise HTTPException(status_code=502, detail=str(exc)[:1000])
+        log.warning('Serving last successful Shopyuri catalog snapshot after refresh error: %s', exc)
+    fresh = await asyncio.to_thread(_build_shopyuri_catalog_for_user, user['id'])
+    return {'categories': fresh, 'cached': False, 'refreshing': False}
 
 
 @web_app.post('/api/purchases')
@@ -2000,6 +2022,8 @@ async def api_purchase(request: Request):
     user = _mini_user(request)
     payload = await request.json()
     raw_oid = str(payload.get('option_id') or '').strip()
+    # Never trust a supplier ID sent by the browser. The synchronized DB mapping is
+    # authoritative, just like the Telegram bot's purchase flow.
     try:
         qty = int(payload.get('quantity'))
         if qty < 1 or qty > 100:
@@ -2019,11 +2043,15 @@ async def api_purchase(request: Request):
         if not opt: raise HTTPException(status_code=404,detail='Gói sản phẩm không tồn tại.')
         price=opt['sell_price'] if u['is_seller'] and opt['sell_price']>0 else opt['price']; total=int(price)*qty
         external=bool(opt.get('shopyuri_product_id'))
+        actual_supplier_id = str(opt.get('shopyuri_product_id') or '').strip()
+        if external and not actual_supplier_id.isdigit():
+            raise HTTPException(status_code=409, detail='Gói sản phẩm chưa có ID Shopyuri hợp lệ. Hãy đồng bộ lại danh sách.')
         if u['balance'] < total:
             raise HTTPException(status_code=400,detail=f'Số dư không đủ. Cần {total:,}đ, hiện có {u["balance"]:,}đ.')
         if external:
             try:
-                key_text,supplier_order=await asyncio.to_thread(shopyuri_buy,opt['shopyuri_product_id'],qty)
+                log.info('Mini App purchase: user=%s option_id=%s supplier_product_id=%s qty=%s', user['id'], oid, actual_supplier_id, qty)
+                key_text,supplier_order=await asyncio.to_thread(shopyuri_buy,actual_supplier_id,qty)
             except Exception as api_error:
                 log.warning('Mini App Shopyuri purchase failed for user=%s product=%s: %s',
                             user['id'], opt['shopyuri_product_id'], api_error)
@@ -2176,10 +2204,15 @@ def _normalize_shopyuri_catalog(items):
     """Normalize nested categories or flat product rows into categories/products/options."""
     grouped = {}
 
-    def add_option(category_name, category_icon, product_name, option, product_id_fallback=None):
-        supplier_id = _shopyuri_get(option, 'product_id', 'item_id', 'sku_id', default=product_id_fallback)
+    def add_option(category_name, category_icon, product_name, option, product_id_fallback=None, stock_fallback=None):
+        # The ID sent to action=buy must be the supplier product_id. In nested
+        # responses, an option.id can be only a local variant ID, so prefer the
+        # parent product's explicit product_id before falling back to option.id.
+        supplier_id = _shopyuri_get(option, 'product_id', 'item_id', 'sku_id')
         if supplier_id is None:
-            supplier_id = _shopyuri_get(option, 'id', default=product_id_fallback)
+            supplier_id = product_id_fallback
+        if supplier_id is None:
+            supplier_id = _shopyuri_get(option, 'id')
         if supplier_id is None:
             return
         supplier_id = str(supplier_id).strip()
@@ -2192,6 +2225,15 @@ def _normalize_shopyuri_catalog(items):
             price = max(0, int(float(_shopyuri_get(option, 'price', 'retail_price', 'selling_price', 'amount', 'original_price', default=0))))
         except (TypeError, ValueError):
             price = 0
+        raw_stock = _shopyuri_get(option, 'stock', 'stock_quantity', 'available_stock', 'stock_count', 'quantity_available', 'available_quantity', 'available_qty', 'stock_available', 'qty_available', 'available_count', 'remain_stock', 'remaining_stock', 'inventory', 'remain', 'remaining', 'in_stock', 'quantity', 'qty', 'available')
+        if raw_stock is None:
+            raw_stock = stock_fallback
+        if isinstance(raw_stock, dict):
+            raw_stock = _shopyuri_get(raw_stock, 'available', 'quantity', 'qty', 'count', 'stock', 'remaining')
+        try:
+            supplier_stock = max(0, int(float(raw_stock))) if raw_stock is not None else None
+        except (TypeError, ValueError):
+            supplier_stock = 1 if str(raw_stock).strip().lower() in ('true', 'yes', 'in_stock') else (0 if raw_stock is not None else None)
         category = grouped.setdefault(category_name, {
             'name': category_name,
             'icon': str(category_icon or ''),
@@ -2203,6 +2245,7 @@ def _normalize_shopyuri_catalog(items):
                 'shopyuri_id': supplier_id,
                 'duration_label': duration,
                 'price': price,
+                'stock': supplier_stock,
             })
 
     for item in items:
@@ -2221,9 +2264,11 @@ def _normalize_shopyuri_catalog(items):
                 if isinstance(options, list) and options:
                     for option in options:
                         add_option(cat_name, cat_icon, product_name, option,
-                                   _shopyuri_get(product, 'product_id', 'id'))
+                                   _shopyuri_get(product, 'product_id', 'id'),
+                                   _shopyuri_get(product, 'stock', 'stock_quantity', 'available_stock', 'quantity_available', 'available_qty', 'qty_available'))
                 else:
-                    add_option(cat_name, cat_icon, product_name, product)
+                    add_option(cat_name, cat_icon, product_name, product,
+                               _shopyuri_get(product, 'product_id', 'id'))
             continue
 
         # Flat product format.
@@ -2240,7 +2285,8 @@ def _normalize_shopyuri_catalog(items):
         if not has_duration and ' - ' in product_name:
             product_name, inferred_duration = [part.strip() for part in product_name.split(' - ', 1)]
             flat_option['duration_label'] = inferred_duration
-        add_option(cat_name, cat_icon, product_name, flat_option)
+        add_option(cat_name, cat_icon, product_name, flat_option,
+                   _shopyuri_get(item, 'product_id', 'id'))
 
     result = []
     for category in grouped.values():
@@ -2346,13 +2392,13 @@ def _sync_shopyuri_catalog(force=False):
                         duration_code = 'shopyuri_' + sid
                         if existing:
                             con.execute(
-                                'UPDATE product_options SET product_id=?,duration=?,duration_label=?,price=? WHERE id=?',
-                                (pid, duration_code, label, price, existing['id'])
+                                'UPDATE product_options SET product_id=?,duration=?,duration_label=?,price=?,shopyuri_stock=? WHERE id=?',
+                                (pid, duration_code, label, price, option.get('stock'), existing['id'])
                             )
                         else:
                             con.execute(
-                                'INSERT INTO product_options(product_id,duration,duration_label,price,sell_price,shopyuri_product_id) VALUES(?,?,?,?,0,?)',
-                                (pid, duration_code, label, price, sid)
+                                'INSERT INTO product_options(product_id,duration,duration_label,price,sell_price,shopyuri_product_id,shopyuri_stock) VALUES(?,?,?,?,0,?,?)',
+                                (pid, duration_code, label, price, sid, option.get('stock'))
                             )
                         synced_options += 1
 

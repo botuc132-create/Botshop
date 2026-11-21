@@ -1180,8 +1180,12 @@ function renderCategoryIconPreview(catName) {
                     name.textContent = fullDurationLabel(option.duration_label || option.duration);
                     
                     const stock = document.createElement('p');
-                    stock.textContent = 'Kho còn: ' + option.stock;
-                    stock.style.color = Number(option.stock) > 0 ? '#22c55e' : '#ff4d4f';
+                    const hasSupplierStock = option.stock !== null && option.stock !== undefined && option.stock !== '';
+                    stock.textContent = option.stock_source === 'shopyuri'
+                        ? (hasSupplierStock ? ('Kho Shopyuri: ' + Number(option.stock)) : 'Kho: Shopyuri')
+                        : ('Kho còn: ' + Number(option.stock || 0));
+                    stock.style.color = !hasSupplierStock && option.stock_source === 'shopyuri'
+                        ? '#22c55e' : (Number(option.stock) > 0 ? '#22c55e' : '#ff4d4f');
                     stock.style.fontWeight = '800';
                     
                     info.append(name, stock);
@@ -1326,7 +1330,12 @@ function renderCategoryIconPreview(catName) {
                     });
 
                     void refreshAccountData();
-                    void loadCatalog({ force: true });
+                    void apiRequest('/api/catalog?refresh=1').then(data => {
+                        rawSyncedCategories = Array.isArray(data?.categories) ? data.categories : [];
+                        categoriesData = applyCustomPricesToCatalog(rawSyncedCategories);
+                        renderCategoriesList();
+                        if (selectedCategory?.name) chooseCategory(selectedCategory.name, { preserveSelection: true });
+                    }).catch(err => console.warn('Không cập nhật được kho Shopyuri sau mua:', err));
                     currentQty = 1;
                     document.getElementById('qty-number').innerText = '1';
                 } catch (error) {
