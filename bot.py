@@ -218,6 +218,7 @@ def init_db():
         '''CREATE TABLE IF NOT EXISTS products (
             id SERIAL PRIMARY KEY, category_id BIGINT REFERENCES categories(id) ON DELETE CASCADE,
             name TEXT NOT NULL, created_by BIGINT, created_at TEXT NOT NULL)''',
+        "ALTER TABLE products ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
         '''DO $$ BEGIN
             IF to_regclass('public.product_options') IS NULL THEN
                 EXECUTE format(
@@ -325,8 +326,10 @@ async def send_main_menu(message, user):
 
 def inline_back(target='shop:home'): return InlineKeyboardMarkup([[InlineKeyboardButton('🌐 Quay lại', callback_data=target)]])
 
-def get_categories():
-    with db() as con: return con.execute('SELECT id,name,guide_url FROM categories ORDER BY id').fetchall()
+def get_categories(active_only=False):
+    with db() as con:
+        if active_only: return con.execute('SELECT id,name,guide_url FROM categories c WHERE EXISTS (SELECT 1 FROM products p WHERE p.category_id=c.id AND p.is_active=TRUE) ORDER BY id').fetchall()
+        return con.execute('SELECT id,name,guide_url FROM categories ORDER BY id').fetchall()
 def get_products(category_id):
     with db() as con: return con.execute('SELECT id,name FROM products WHERE category_id::text=?::text ORDER BY id', (category_id,)).fetchall()
 
@@ -372,7 +375,7 @@ async def admin_cmd(update, context):
     context.user_data.clear(); await update.message.reply_text(admin_menu_text(), reply_markup=ADMIN_KB)
 
 async def show_shop(message, edit=False):
-    cats = get_categories()
+    cats = get_categories(active_only=True)
     if not cats:
         txt = '🛍 CỬA HÀNG\n\nHiện chưa có danh mục sản phẩm.'
         if edit: await message.edit_text(txt, reply_markup=inline_back('shop:home'))
@@ -387,14 +390,14 @@ async def show_shop(message, edit=False):
 async def show_category(q, category_id, user_id):
     with db() as con:
         cat = con.execute('SELECT * FROM categories WHERE id=?', (category_id,)).fetchone()
-        prods = con.execute('SELECT id, name FROM products WHERE category_id::text=?::text', (category_id,)).fetchall()
+        prods = con.execute('SELECT id, name FROM products WHERE category_id::text=?::text AND is_active=TRUE', (category_id,)).fetchall()
         user_row = con.execute('SELECT is_seller FROM users WHERE user_id=?', (user_id,)).fetchone()
         is_seller = bool(user_row and user_row['is_seller'])
         prod_ids = [p['id'] for p in prods]
         opts = []
         if prod_ids:
             placeholders = ','.join(['?'] * len(prod_ids))
-            opts = con.execute(f"SELECT po.*, p.name AS product_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text WHERE po.product_id::text IN ({placeholders}) ORDER BY po.id", [str(pid) for pid in prod_ids]).fetchall()
+            opts = con.execute(f"SELECT po.*, p.name AS product_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text WHERE po.product_id::text IN ({placeholders}) AND p.is_active=TRUE ORDER BY po.id", [str(pid) for pid in prod_ids]).fetchall()
             
     if not cat: await q.edit_message_text('Danh mục không còn tồn tại.'); return
     rows = []
@@ -411,7 +414,7 @@ async def show_category(q, category_id, user_id):
 
 async def show_quantity(q, option_id, context, user_id):
     with db() as con:
-        o=con.execute('SELECT po.*,p.name AS product_name,p.category_id,c.name AS category_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=?',(option_id,)).fetchone()
+        o=con.execute('SELECT po.*,p.name AS product_name,p.category_id,c.name AS category_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=? AND p.is_active=TRUE',(option_id,)).fetchone()
         u_row = con.execute('SELECT is_seller FROM users WHERE user_id=?',(user_id,)).fetchone()
     if not o: await q.edit_message_text('Gói sản phẩm không còn tồn tại.'); return
     is_seller = bool(u_row and u_row['is_seller'])
@@ -436,7 +439,7 @@ async def show_quantity(q, option_id, context, user_id):
 
 async def show_confirm(q, option_id, qty, context, user_id):
     with db() as con:
-        o=con.execute('SELECT po.*,p.name AS product_name,p.category_id,c.name AS category_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=?',(option_id,)).fetchone()
+        o=con.execute('SELECT po.*,p.name AS product_name,p.category_id,c.name AS category_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=? AND p.is_active=TRUE',(option_id,)).fetchone()
         u_row = con.execute('SELECT is_seller FROM users WHERE user_id=?',(user_id,)).fetchone()
     if not o: await q.edit_message_text('Sản phẩm không còn tồn tại.'); return
     is_seller = bool(u_row and u_row['is_seller'])
@@ -567,7 +570,7 @@ async def do_purchase(q, update, context):
         opt = con.execute('''SELECT po.*,p.name AS product_name,p.category_id,
             c.name AS category_name FROM product_options po
             JOIN products p ON p.id::text=po.product_id::text
-            JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=?''', (oid,)).fetchone()
+            JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=? AND p.is_active=TRUE''', (oid,)).fetchone()
         if not user or user['is_locked']:
             con.rollback()
             await q.edit_message_text('⛔ Tài khoản không thể mua hàng.')
@@ -1615,7 +1618,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not text.isdigit() or not 1 <= int(text) <= 1000: await msg.reply_text('Nhập số nguyên từ 1 đến 1.000.'); return
         oid = context.user_data.get('selected_option'); context.user_data['flow'] = None
         with db() as con:
-            o = con.execute('SELECT po.*,p.name AS product_name,p.category_id,c.name AS category_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=?', (oid,)).fetchone()
+            o = con.execute('SELECT po.*,p.name AS product_name,p.category_id,c.name AS category_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=? AND p.is_active=TRUE', (oid,)).fetchone()
             u_row = con.execute('SELECT is_seller FROM users WHERE user_id=?',(user.id,)).fetchone()
         if not o: await msg.reply_text('Gói sản phẩm không còn tồn tại.', reply_markup=USER_KB); return
         is_seller = bool(u_row and u_row['is_seller'])
@@ -1957,13 +1960,14 @@ def _build_shopyuri_catalog_for_user(user_id):
         cats = con.execute('''SELECT DISTINCT c.id,c.name,c.guide_url,c.icon
             FROM categories c JOIN products p ON p.category_id=c.id
             JOIN product_options po ON po.product_id=p.id
-            WHERE po.shopyuri_product_id IS NOT NULL ORDER BY c.id''').fetchall()
+            WHERE po.shopyuri_product_id IS NOT NULL AND p.is_active=TRUE ORDER BY c.id''').fetchall()
         output=[]
         seller = con.execute('SELECT is_seller FROM users WHERE user_id=?', (user_id,)).fetchone()
+        can_view_sell_price = bool((seller and seller['is_seller']) or user_id in ADMIN_IDS)
         for cat in cats:
             products = con.execute('''SELECT DISTINCT p.id,p.name FROM products p
                 JOIN product_options po ON po.product_id=p.id
-                WHERE p.category_id=? AND po.shopyuri_product_id IS NOT NULL ORDER BY p.id''', (cat['id'],)).fetchall()
+                WHERE p.category_id=? AND po.shopyuri_product_id IS NOT NULL AND p.is_active=TRUE ORDER BY p.id''', (cat['id'],)).fetchall()
             prod_out=[]
             for product in products:
                 opts=con.execute('''SELECT po.id,po.duration,po.duration_label,po.price,po.sell_price,
@@ -1976,7 +1980,7 @@ def _build_shopyuri_catalog_for_user(user_id):
                     'price':int(o['sell_price'] if seller and seller['is_seller'] and o['sell_price'] else o['price']),
                     'stock':int(o['shopyuri_stock']) if o['shopyuri_stock'] is not None else 0,
                     'stock_source':'supplier','regular_price':int(o['price'] or 0),
-                    'sell_price':int(o['sell_price'] or 0),'shopyuri':True,
+                    'sell_price':int(o['sell_price'] or 0) if can_view_sell_price else 0,'shopyuri':True,
                     'shopyuri_product_id':str(o['shopyuri_product_id'])} for o in opts]})
             output.append({'id':cat['id'],'name':cat['name'],'guide_url':cat['guide_url'],
                            'icon':cat['icon'] or '', 'products':prod_out})
@@ -2158,7 +2162,7 @@ async def api_admin_overview(request: Request):
     _mini_user(request,True)
     with db() as con:
         cats=con.execute('SELECT id,name FROM categories ORDER BY id').fetchall()
-        products=con.execute('SELECT p.id,p.name,p.category_id,c.name AS category_name FROM products p JOIN categories c ON c.id=p.category_id ORDER BY p.id').fetchall()
+        products=con.execute('SELECT p.id,p.name,p.category_id,p.is_active,c.name AS category_name FROM products p JOIN categories c ON c.id=p.category_id ORDER BY p.id').fetchall()
         options=con.execute('SELECT po.id,po.product_id,po.duration_label,po.price,po.sell_price,po.shopyuri_product_id,p.name AS product_name FROM product_options po JOIN products p ON p.id=po.product_id ORDER BY po.id').fetchall()
         users=con.execute('SELECT COUNT(*) AS n FROM users').fetchone()['n']
         revenue=con.execute("SELECT COALESCE(SUM(amount),0) AS n FROM deposits WHERE status='approved'").fetchone()['n']
@@ -2547,6 +2551,12 @@ async def api_admin_action(request: Request):
                 cid=int(data.get('category_id')); name=str(data.get('name','')).strip()
                 if not name: raise HTTPException(status_code=400,detail='Tên mới không được trống.')
                 con.execute('UPDATE categories SET name=? WHERE id=?',(name,cid)); return {'success':True,'message':'Đã đổi tên danh mục.'}
+            if action in ('stop_product','enable_product'):
+                ident=int(data.get('id') or 0)
+                active = action == 'enable_product'
+                cur=con.execute('UPDATE products SET is_active=? WHERE id=? RETURNING name',(active,ident)).fetchone()
+                if not cur: raise HTTPException(status_code=404,detail='Không tìm thấy sản phẩm.')
+                return {'success':True,'message':f"Đã {'bật bán lại' if active else 'dừng bán'} sản phẩm {cur['name']}. Dữ liệu, key, giá và lịch sử mua hàng vẫn được giữ nguyên."}
             if action in ('delete_category','delete_product'):
                 ident=int(data.get('id')); table='categories' if action=='delete_category' else 'products'
                 cur=con.execute(f'DELETE FROM {table} WHERE id=?',(ident,))
