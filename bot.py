@@ -111,7 +111,7 @@ ADMIN_KB = InlineKeyboardMarkup([
     [quick_button('Sửa giá Sell', callback_data='adm:editsellprice')],
     [quick_button('Chi tiết sản phẩm', callback_data='adm:detailproduct')],
     [quick_button('Đổi tên danh mục ngoài', callback_data='adm:renamecat')],
-    [quick_button('Xóa sản phẩm', style='danger', callback_data='adm:delproduct')],
+    [quick_button('Dừng bán / Bật bán lại', callback_data='adm:delproduct')],
     [quick_button('Thêm key sản phẩm', callback_data='adm:addkeys')],
     [quick_button('Kiểm tra kho', callback_data='adm:stock')],
     [quick_button('Bảo trì: Bật / Tắt', callback_data='adm:maintenance')],
@@ -326,12 +326,10 @@ async def send_main_menu(message, user):
 
 def inline_back(target='shop:home'): return InlineKeyboardMarkup([[InlineKeyboardButton('🌐 Quay lại', callback_data=target)]])
 
-def get_categories(active_only=False):
-    with db() as con:
-        if active_only: return con.execute('SELECT id,name,guide_url FROM categories c WHERE EXISTS (SELECT 1 FROM products p WHERE p.category_id=c.id AND p.is_active=TRUE) ORDER BY id').fetchall()
-        return con.execute('SELECT id,name,guide_url FROM categories ORDER BY id').fetchall()
+def get_categories():
+    with db() as con: return con.execute('SELECT c.id,c.name,c.guide_url FROM categories c WHERE EXISTS (SELECT 1 FROM products p WHERE p.category_id=c.id AND p.is_active=TRUE) ORDER BY c.id').fetchall()
 def get_products(category_id):
-    with db() as con: return con.execute('SELECT id,name FROM products WHERE category_id::text=?::text ORDER BY id', (category_id,)).fetchall()
+    with db() as con: return con.execute('SELECT id,name FROM products WHERE category_id::text=?::text AND is_active=TRUE ORDER BY id', (category_id,)).fetchall()
 
 def get_product_category_id(product_id):
     with db() as con:
@@ -375,7 +373,7 @@ async def admin_cmd(update, context):
     context.user_data.clear(); await update.message.reply_text(admin_menu_text(), reply_markup=ADMIN_KB)
 
 async def show_shop(message, edit=False):
-    cats = get_categories(active_only=True)
+    cats = get_categories()
     if not cats:
         txt = '🛍 CỬA HÀNG\n\nHiện chưa có danh mục sản phẩm.'
         if edit: await message.edit_text(txt, reply_markup=inline_back('shop:home'))
@@ -397,7 +395,7 @@ async def show_category(q, category_id, user_id):
         opts = []
         if prod_ids:
             placeholders = ','.join(['?'] * len(prod_ids))
-            opts = con.execute(f"SELECT po.*, p.name AS product_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text WHERE po.product_id::text IN ({placeholders}) AND p.is_active=TRUE ORDER BY po.id", [str(pid) for pid in prod_ids]).fetchall()
+            opts = con.execute(f"SELECT po.*, p.name AS product_name FROM product_options po JOIN products p ON p.id::text=po.product_id::text WHERE po.product_id::text IN ({placeholders}) ORDER BY po.id", [str(pid) for pid in prod_ids]).fetchall()
             
     if not cat: await q.edit_message_text('Danh mục không còn tồn tại.'); return
     rows = []
@@ -1305,19 +1303,26 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if q.message:
             await q.message.reply_text('Nhập mức giá Sell mới bằng số VNĐ:')
     elif data == 'adm:delproduct':
-        await q.edit_message_text('Chọn phần cần xóa:', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📁 Xóa danh mục ngoài', callback_data='adm:delcat')], [InlineKeyboardButton('📦 Xóa sản phẩm trong', callback_data='adm:delinner')], [InlineKeyboardButton('↩️ Quay lại', callback_data='adm:menu')]]))
+        await q.edit_message_text('Chọn thao tác quản lý bán sản phẩm:', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📦 Dừng bán / Bật bán lại sản phẩm', callback_data='adm:delinner')], [InlineKeyboardButton('📁 Quản lý danh mục', callback_data='adm:delcat')], [InlineKeyboardButton('↩️ Quay lại', callback_data='adm:menu')]]))
     elif data == 'adm:delcat':
         cats = get_categories()
         await q.edit_message_text('Chọn danh mục ngoài cần xóa:', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(c['name'], callback_data=f"adm:delcatconfirm:{c['id']}")] for c in cats] + [[InlineKeyboardButton('↩️ Quay lại', callback_data='adm:menu')]]))
     elif data.startswith('adm:delcatconfirm:'):
         cid = int(data.split(':')[2]); context.user_data['delete_target'] = ('category', cid); await q.edit_message_text('Xác nhận xóa danh mục và toàn bộ sản phẩm/key bên trong?', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⚠️ XÁC NHẬN XÓA', callback_data='adm:deleteconfirm')], [InlineKeyboardButton('Hủy', callback_data='adm:menu')]]))
     elif data == 'adm:delinner':
-        cats = get_categories()
-        await q.edit_message_text('Chọn danh mục chứa sản phẩm cần xóa:', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(c['name'], callback_data=f"adm:delinnercat:{c['id']}")] for c in cats] + [[InlineKeyboardButton('↩️ Quay lại', callback_data='adm:menu')]]))
+        with db() as con: cats = con.execute('SELECT id,name FROM categories ORDER BY id').fetchall()
+        await q.edit_message_text('Chọn danh mục chứa sản phẩm cần dừng/bật bán:', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(c['name'], callback_data=f"adm:delinnercat:{c['id']}")] for c in cats] + [[InlineKeyboardButton('↩️ Quay lại', callback_data='adm:menu')]]))
     elif data.startswith('adm:delinnercat:'):
-        cid = int(data.split(':')[2]); ps = get_products(cid); await q.edit_message_text('Chọn sản phẩm cần xóa:', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(p['name'], callback_data=f"adm:delinnerconfirm:{p['id']}")] for p in ps] + [[InlineKeyboardButton('↩️ Quay lại', callback_data='adm:menu')]]))
+        cid = int(data.split(':')[2]);
+        with db() as con: ps = con.execute('SELECT id,name,is_active FROM products WHERE category_id=? ORDER BY id',(cid,)).fetchall()
+        await q.edit_message_text('Chọn sản phẩm. Trạng thái hiện tại được ghi rõ:', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(('🟢 ĐANG BÁN · ' if p['is_active'] else '⛔ ĐÃ DỪNG · ')+p['name'], callback_data=f"adm:delinnerconfirm:{p['id']}")] for p in ps] + [[InlineKeyboardButton('↩️ Quay lại', callback_data='adm:menu')]]))
     elif data.startswith('adm:delinnerconfirm:'):
-        pid = int(data.split(':')[2]); context.user_data['delete_target'] = ('product', pid); await q.edit_message_text('Xác nhận xóa sản phẩm và các gói/key bên trong?', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⚠️ XÁC NHẬN XÓA', callback_data='adm:deleteconfirm')], [InlineKeyboardButton('Hủy', callback_data='adm:menu')]]))
+        pid = int(data.split(':')[2])
+        with db() as con:
+            row=con.execute('SELECT name,is_active FROM products WHERE id=?',(pid,)).fetchone()
+            if row: con.execute('UPDATE products SET is_active=? WHERE id=?',(not bool(row['is_active']),pid))
+        if not row: await q.answer('Không tìm thấy sản phẩm.', show_alert=True); return
+        await q.edit_message_text(('🟢 Đã bật bán lại: ' if not row['is_active'] else '⛔ Đã dừng bán: ')+row['name']+'\n\nSản phẩm, key, giá và lịch sử vẫn được giữ nguyên.', reply_markup=ADMIN_KB)
     elif data == 'adm:deleteconfirm':
         target = context.user_data.pop('delete_target', None)
         if target:
@@ -1795,7 +1800,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with db() as con:
             for key in keys:
                 cur = con.execute("INSERT INTO product_keys(option_id,key_value,added_by,added_at) VALUES(?,?,?,?) ON CONFLICT(key_value) DO NOTHING", (oid, key, user.id, now())); added += cur.rowcount
-            info = con.execute('SELECT p.name AS product_name,c.name AS category_name,po.duration_label FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=?', (oid,)).fetchone()
+            info = con.execute('SELECT p.name AS product_name,c.name AS category_name,po.duration_label FROM product_options po JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=? AND p.is_active=TRUE', (oid,)).fetchone()
             stock = con.execute("SELECT COUNT(*) AS n FROM product_keys WHERE option_id=? AND status='available'", (oid,)).fetchone()['n']
         context.user_data.clear()
         await msg.reply_text(f'✅ Đã thêm {added}/{len(keys)} key thành công. Kho hiện có: {stock} key.', reply_markup=ADMIN_KB)
@@ -1963,7 +1968,6 @@ def _build_shopyuri_catalog_for_user(user_id):
             WHERE po.shopyuri_product_id IS NOT NULL AND p.is_active=TRUE ORDER BY c.id''').fetchall()
         output=[]
         seller = con.execute('SELECT is_seller FROM users WHERE user_id=?', (user_id,)).fetchone()
-        can_view_sell_price = bool((seller and seller['is_seller']) or user_id in ADMIN_IDS)
         for cat in cats:
             products = con.execute('''SELECT DISTINCT p.id,p.name FROM products p
                 JOIN product_options po ON po.product_id=p.id
@@ -1980,7 +1984,7 @@ def _build_shopyuri_catalog_for_user(user_id):
                     'price':int(o['sell_price'] if seller and seller['is_seller'] and o['sell_price'] else o['price']),
                     'stock':int(o['shopyuri_stock']) if o['shopyuri_stock'] is not None else 0,
                     'stock_source':'supplier','regular_price':int(o['price'] or 0),
-                    'sell_price':int(o['sell_price'] or 0) if can_view_sell_price else 0,'shopyuri':True,
+                    'sell_price':int(o['sell_price'] or 0),'shopyuri':True,
                     'shopyuri_product_id':str(o['shopyuri_product_id'])} for o in opts]})
             output.append({'id':cat['id'],'name':cat['name'],'guide_url':cat['guide_url'],
                            'icon':cat['icon'] or '', 'products':prod_out})
@@ -2039,7 +2043,7 @@ async def api_purchase(request: Request):
         con.execute('BEGIN')
         u=con.execute('SELECT balance,is_locked,is_seller FROM users WHERE user_id=? FOR UPDATE',(user['id'],)).fetchone()
         opt=con.execute('''SELECT po.*,p.name AS product_name,p.category_id,c.name AS category_name FROM product_options po
-            JOIN products p ON p.id=po.product_id JOIN categories c ON c.id=p.category_id WHERE po.id=?''',(oid,)).fetchone()
+            JOIN products p ON p.id=po.product_id JOIN categories c ON c.id=p.category_id WHERE po.id=? AND p.is_active=TRUE''',(oid,)).fetchone()
         if not u or u['is_locked']: raise HTTPException(status_code=403,detail='Tài khoản không thể mua hàng.')
         if not opt: raise HTTPException(status_code=404,detail='Gói sản phẩm không tồn tại.')
         price=opt['sell_price'] if u['is_seller'] and opt['sell_price']>0 else opt['price']; total=int(price)*qty
@@ -2392,8 +2396,8 @@ def _sync_shopyuri_catalog(force=False):
                         duration_code = 'shopyuri_' + sid
                         if existing:
                             con.execute(
-                                'UPDATE product_options SET product_id=?,duration=?,duration_label=?,price=?,shopyuri_stock=? WHERE id=?',
-                                (pid, duration_code, label, price, option.get('stock'), existing['id'])
+                                'UPDATE product_options SET product_id=?,duration=?,duration_label=?,shopyuri_stock=? WHERE id=?',
+                                (pid, duration_code, label, option.get('stock'), existing['id'])
                             )
                         else:
                             con.execute(
@@ -2551,17 +2555,24 @@ async def api_admin_action(request: Request):
                 cid=int(data.get('category_id')); name=str(data.get('name','')).strip()
                 if not name: raise HTTPException(status_code=400,detail='Tên mới không được trống.')
                 con.execute('UPDATE categories SET name=? WHERE id=?',(name,cid)); return {'success':True,'message':'Đã đổi tên danh mục.'}
-            if action in ('stop_product','enable_product'):
-                ident=int(data.get('id') or 0)
-                active = action == 'enable_product'
-                cur=con.execute('UPDATE products SET is_active=? WHERE id=? RETURNING name',(active,ident)).fetchone()
-                if not cur: raise HTTPException(status_code=404,detail='Không tìm thấy sản phẩm.')
-                return {'success':True,'message':f"Đã {'bật bán lại' if active else 'dừng bán'} sản phẩm {cur['name']}. Dữ liệu, key, giá và lịch sử mua hàng vẫn được giữ nguyên."}
-            if action in ('delete_category','delete_product'):
-                ident=int(data.get('id')); table='categories' if action=='delete_category' else 'products'
-                cur=con.execute(f'DELETE FROM {table} WHERE id=?',(ident,))
-                if not cur.rowcount: raise HTTPException(status_code=404,detail='Không tìm thấy mục cần xóa.')
-                return {'success':True,'message':'Đã xóa. Các dữ liệu con liên quan sẽ được xử lý theo ràng buộc database.'}
+            if action=='toggle_product_sale':
+                pid=int(data.get('product_id') or 0)
+                row=con.execute('SELECT id,name,is_active FROM products WHERE id=? FOR UPDATE',(pid,)).fetchone()
+                if not row: raise HTTPException(status_code=404,detail='Không tìm thấy sản phẩm.')
+                new_state=not bool(row['is_active'])
+                con.execute('UPDATE products SET is_active=? WHERE id=?',(new_state,pid))
+                return {'success':True,'is_active':new_state,'message':('Đã bật bán lại sản phẩm ' if new_state else 'Đã dừng bán sản phẩm ')+row['name']+'. Dữ liệu, key và lịch sử vẫn được giữ nguyên.'}
+            if action=='delete_product':
+                # Compatibility for older Mini App builds: the former delete action now only stops sales.
+                ident=int(data.get('id') or data.get('product_id') or 0)
+                row=con.execute('SELECT name FROM products WHERE id=? FOR UPDATE',(ident,)).fetchone()
+                if not row: raise HTTPException(status_code=404,detail='Không tìm thấy sản phẩm.')
+                con.execute('UPDATE products SET is_active=FALSE WHERE id=?',(ident,))
+                return {'success':True,'message':'Đã dừng bán sản phẩm '+row['name']+'. Dữ liệu, key và lịch sử vẫn được giữ nguyên.'}
+            if action=='delete_category':
+                ident=int(data.get('id')); cur=con.execute('DELETE FROM categories WHERE id=?',(ident,))
+                if not cur.rowcount: raise HTTPException(status_code=404,detail='Không tìm thấy danh mục cần xóa.')
+                return {'success':True,'message':'Đã xóa danh mục.'}
             if action=='add_keys':
                 oid=int(data.get('option_id')); keys=clean_lines(str(data.get('keys','')))
                 if not keys: raise HTTPException(status_code=400,detail='Không có key hợp lệ.')

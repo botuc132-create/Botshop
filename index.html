@@ -423,7 +423,6 @@
             <div class="admin-title">QUẢN TRỊ ADMIN (HỆ THỐNG)</div>
             <p class="deposit-desc">Bảng điều khiển quản lý trực tiếp từ bot.py & Mini App.</p>
             <div class="admin-grid">
-                <button class="admin-action-btn admin-price-btn" onclick="openCustomPriceProductModal()">💰 Sửa Giá Sell (Chọn Sản Phẩm → Thời Hạn)</button>
                 <button class="admin-action-btn" onclick="adminAction('broadcast')">📢 Gửi Thông Báo</button>
                 <button class="admin-action-btn" onclick="adminAction('stats')">📊 Thống Kê Hệ Thống</button>
                 <button class="admin-action-btn" onclick="adminAction('usercheck')">👤 Quản Lý Người Dùng</button>
@@ -431,12 +430,12 @@
                 <button class="admin-action-btn" onclick="adminAction('add_product')">➕ Thêm Sản Phẩm</button>
                 <button class="admin-action-btn" onclick="adminAction('add_guide')">🔗 Link Cách Cài</button>
                 <button class="admin-action-btn" onclick="adminAction('map_shop')">🔗 Gán ID Shop</button>
-                <button class="admin-action-btn" onclick="adminAction('edit_price')">✏️ Sửa Giá Thường</button>
+                <button class="admin-action-btn" onclick="openProductPriceModal('regular')">✏️ Sửa Giá Người Dùng Thường</button>
+                <button class="admin-action-btn" onclick="openProductPriceModal('sell')">💰 Sửa Giá Sell</button>
                 <button class="admin-action-btn" onclick="adminAction('detail_product')">📋 Chi Tiết Sản Phẩm</button>
                 <button class="admin-action-btn" onclick="adminAction('rename_category')">📝 Đổi Tên Danh Mục</button>
                 <button class="admin-action-btn" onclick="adminAction('delete_category')">🗑 Xóa Danh Mục</button>
-                <button class="admin-action-btn" onclick="adminAction('stop_product')">⏸ Dừng Bán Sản Phẩm</button>
-                <button class="admin-action-btn" onclick="adminAction('enable_product')">▶️ Bật Bán Lại</button>
+                <button class="admin-action-btn" onclick="openProductSaleToggleModal()">⛔ Dừng bán / Bật bán lại</button>
                 <button class="admin-action-btn" onclick="adminAddKeyFlow()">🔑 Thêm Key Sản Phẩm</button>
                 <button class="admin-action-btn" onclick="adminAction('stock')">📦 Kiểm Tra Kho</button>
                 <button class="admin-action-btn" onclick="adminAction('maintenance')">🛠 Bật / Tắt Bảo Trì</button>
@@ -938,7 +937,6 @@ function renderCategoryIconPreview(catName) {
                             <h5 style="margin:0; font-size:13px; font-weight:750; color:white;">${cat.name}</h5>
                             <p style="margin:2px 0 0 0; font-size:10px; color:var(--text-sub);">Nhấn để chọn danh mục</p>
                         </div>
-                        <button onclick="event.stopPropagation(); deleteCategoryPrompt('${cat.name}', ${cat.id})" style="background:#3d1518; border:1px solid #7d262d; color:#ff6677; font-size:10px; font-weight:700; padding:6px 10px; border-radius:8px; cursor:pointer;">🗑 Xóa mục</button>
                     </div>
                 `;
                 listContainer.appendChild(item);
@@ -981,132 +979,88 @@ function renderCategoryIconPreview(catName) {
             return items;
         }
 
-        function openCustomPriceProductModal() {
+        let activePriceMode = 'sell';
+
+        function openProductPriceModal(mode) {
+            activePriceMode = mode === 'regular' ? 'regular' : 'sell';
             tg.HapticFeedback?.impactOccurred('light');
             const titleEl = document.getElementById('price-modal-title');
             const descEl = document.getElementById('price-modal-desc');
             const bodyEl = document.getElementById('price-modal-body');
-
-            titleEl.textContent = '💲 CHỌN SẢN PHẨM ĐỂ SỬA GIÁ RIÊNG';
-            descEl.textContent = 'Nhấp vào 1 sản phẩm đã đồng bộ để xem & đổi giá từng gói thời hạn (chỉ áp dụng cho Mini App / Bot của bạn).';
+            const label = activePriceMode === 'regular' ? 'GIÁ NGƯỜI DÙNG THƯỜNG' : 'GIÁ SELL';
+            titleEl.textContent = `✏️ CHỌN SẢN PHẨM ĐỂ SỬA ${label}`;
+            descEl.textContent = 'Chọn sản phẩm, sau đó chọn thời hạn để cập nhật giá trực tiếp vào database dùng chung Bot và Mini App.';
             bodyEl.innerHTML = '';
-
             const flatProducts = getAllSyncedProductsFlat();
             if (!flatProducts.length) {
                 bodyEl.innerHTML = '<p class="deposit-desc">Chưa có sản phẩm nào được đồng bộ.</p>';
-                document.getElementById('admin-price-modal').classList.add('open');
-                return;
             }
-
             flatProducts.forEach(({ categoryName, product }) => {
-                const opts = product.options || [];
-                const customCount = opts.filter(o => Number(o.sell_price || 0) > 0).length;
-
                 const row = document.createElement('div');
                 row.className = 'category-option-item';
-                row.onclick = () => openCustomPriceDurationModal(categoryName, product.name);
-
-                row.innerHTML = `
-                    <div style="min-width:0; flex-grow:1;">
-                        <h5 style="margin:0; font-size:13px; font-weight:800; color:#fff;">${product.name}</h5>
-                        <p style="margin:3px 0 0 0; font-size:10px; color:var(--text-sub);">
-                            Mục: ${categoryName} · ${opts.length} gói thời hạn
-                            ${customCount > 0 ? `· <span style="color:#00e5a8;">Đã đặt ${customCount} giá Sell</span>` : ''}
-                        </p>
-                    </div>
-                    <span style="color:#00e5a8; font-size:14px; font-weight:800; margin-left:10px;">Đổi giá ›</span>
-                `;
+                row.onclick = () => openProductPriceDurationModal(categoryName, product.name);
+                row.innerHTML = `<div style="min-width:0;flex-grow:1"><h5 style="margin:0;font-size:13px;font-weight:800;color:#fff;">${product.name}</h5><p style="margin:3px 0 0;font-size:10px;color:var(--text-sub);">Thư mục: ${categoryName} · ${(product.options||[]).length} gói</p></div><span style="color:#00e5a8;font-size:14px;font-weight:800;">Chọn ›</span>`;
                 bodyEl.appendChild(row);
             });
-
             document.getElementById('admin-price-modal').classList.add('open');
         }
 
-        function openCustomPriceDurationModal(categoryName, productName) {
+        function openProductPriceDurationModal(categoryName, productName) {
             tg.HapticFeedback?.selectionChanged();
-            categoriesData = applyCustomPricesToCatalog(rawSyncedCategories);
-
-            const cat = categoriesData.find(c => c.name === categoryName);
+            const cat = rawSyncedCategories.find(c => c.name === categoryName);
             const prod = (cat?.products || []).find(p => p.name === productName);
-
             const titleEl = document.getElementById('price-modal-title');
             const descEl = document.getElementById('price-modal-desc');
             const bodyEl = document.getElementById('price-modal-body');
-
+            const mode = activePriceMode;
+            const label = mode === 'regular' ? 'GIÁ THƯỜNG' : 'GIÁ SELL';
             titleEl.textContent = `⏱ ${productName}`;
-            descEl.innerHTML = `
-                <button onclick="openCustomPriceProductModal()" style="background:#102138; border:1px solid #1f3c63; color:#00e5a8; font-size:11px; font-weight:800; padding:5px 10px; border-radius:8px; cursor:pointer; margin-bottom:8px;">← Quay lại danh sách sản phẩm</button>
-                <div>Nhấp vào từng thời hạn bên dưới để sửa giá bán trên Mini App / Bot (API gốc giữ nguyên):</div>
-            `;
+            descEl.innerHTML = `<button onclick="openProductPriceModal('${mode}')" style="background:#102138;border:1px solid #1f3c63;color:#00e5a8;font-size:11px;font-weight:800;padding:5px 10px;border-radius:8px;cursor:pointer;margin-bottom:8px;">← Quay lại sản phẩm</button><div>Chọn thời hạn để sửa ${label.toLowerCase()}.</div>`;
             bodyEl.innerHTML = '';
-
-            if (!prod || !(prod.options || []).length) {
-                bodyEl.innerHTML = '<p class="deposit-desc">Sản phẩm này chưa có gói thời hạn nào.</p>';
-                return;
-            }
-
-            (prod.options || []).forEach(opt => {
-                const durLabel = fullDurationLabel(opt.duration_label || opt.duration);
-                const currentPrice = Number(opt.sell_price || 0);
-                const basePrice = Number(opt.regular_price ?? opt.price ?? 0);
-                const diff = currentPrice - basePrice;
-
-                const card = document.createElement('div');
-                card.className = 'category-option-item';
-                card.style.marginBottom = '10px';
-                card.onclick = () => editSingleCustomPrice(categoryName, productName, opt);
-
-                const badgeText = diff > 0
-                    ? `<span style="color:#00ff88;">Lãi +${diff.toLocaleString('vi-VN')}đ</span>`
-                    : (diff < 0
-                        ? `<span style="color:#ffcc00;">Giảm ${Math.abs(diff).toLocaleString('vi-VN')}đ</span>`
-                        : `<span style="color:var(--text-sub);">Giá gốc / mặc định</span>`);
-
-                card.innerHTML = `
-                    <div style="min-width:0; flex-grow:1;">
-                        <h5 style="margin:0; font-size:13px; font-weight:800; color:#fff;">${durLabel}</h5>
-                        <p style="margin:3px 0 0 0; font-size:10px; color:var(--text-sub);">
-                            Giá thường: ${basePrice.toLocaleString('vi-VN')}đ · ${badgeText} · Kho còn: ${Number(opt.stock || 0)} key
-                        </p>
-                    </div>
-                    <div style="text-align:right; margin-left:10px;">
-                        <div style="font-size:13px; font-weight:900; color:#00e5a8;">${currentPrice.toLocaleString('vi-VN')}đ</div>
-                        <div style="font-size:10px; color:#94a69c;">Nhấp để sửa</div>
-                    </div>
-                `;
+            if (!prod || !(prod.options||[]).length) { bodyEl.innerHTML='<p class="deposit-desc">Sản phẩm chưa có gói thời hạn.</p>'; return; }
+            (prod.options||[]).forEach(opt => {
+                const current = Number(mode === 'regular' ? (opt.regular_price ?? opt.price ?? 0) : (opt.sell_price || 0));
+                const card=document.createElement('div'); card.className='category-option-item'; card.style.marginBottom='10px';
+                card.onclick=()=>editProductOptionPrice(productName,opt,mode,categoryName);
+                card.innerHTML=`<div style="min-width:0;flex-grow:1"><h5 style="margin:0;font-size:13px;font-weight:800;color:#fff;">${fullDurationLabel(opt.duration_label||opt.duration)}</h5><p style="margin:3px 0 0;font-size:10px;color:var(--text-sub);">${mode==='regular'?'Giá người dùng thường':'Giá Sell'} hiện tại</p></div><strong style="color:#00e5a8;">${current.toLocaleString('vi-VN')}đ · Sửa</strong>`;
                 bodyEl.appendChild(card);
             });
         }
 
-        async function editSingleCustomPrice(categoryName, productName, opt) {
-            const durLabel = fullDurationLabel(opt.duration_label || opt.duration);
-            const currentPrice = Number(opt.sell_price || 0);
-            const basePrice = Number(opt.regular_price ?? opt.price ?? 0);
-
-            const input = prompt(
-                `Sửa giá bán riêng cho: ${productName} – ${durLabel}\n` +
-                `Giá Sell hiện tại: ${currentPrice.toLocaleString('vi-VN')}đ\n` +
-                `Giá tham chiếu ban đầu: ${basePrice.toLocaleString('vi-VN')}đ\n\n` +
-                `Nhập giá Sell mới (VNĐ). Nhập 0 để tắt giá Sell:`,
-                String(currentPrice)
-            );
-
-            if (input === null) return;
-            const trimmed = input.trim();
-            if (!trimmed) return;
-
-            const parsedPrice = Number(trimmed.replace(/[^\d]/g, ''));
-            if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
-                tg.showAlert('Giá nhập không hợp lệ.');
-                return;
-            }
+        async function editProductOptionPrice(productName,opt,mode,categoryName) {
+            const field = mode === 'regular' ? 'price' : 'sell_price';
+            const action = mode === 'regular' ? 'edit_price' : 'edit_sell_price';
+            const current = Number(mode === 'regular' ? (opt.regular_price ?? opt.price ?? 0) : (opt.sell_price || 0));
+            const label = mode === 'regular' ? 'giá người dùng thường' : 'giá Sell';
+            const input = prompt(`Sửa ${label}: ${productName} – ${fullDurationLabel(opt.duration_label||opt.duration)}\nGiá hiện tại: ${current.toLocaleString('vi-VN')}đ\nNhập giá mới (VNĐ):`,String(current));
+            if (input === null || !input.trim()) return;
+            const parsed=Number(input.trim().replace(/[^\d]/g,''));
+            if (!Number.isSafeInteger(parsed) || parsed < 0) { tg.showAlert('Giá nhập không hợp lệ.'); return; }
             try {
-                await adminApi('edit_sell_price', { option_id: Number(opt.id), price: parsedPrice });
+                await adminApi(action,{option_id:Number(opt.id),price:parsed});
                 await loadCatalog({force:true});
-                tg.showAlert(parsedPrice === 0 ? 'Đã tắt giá Sell.' : 'Đã cập nhật giá Sell trong database; bot và Mini App dùng chung giá này.');
-                openCustomPriceProductModal();
-                openCustomPriceDurationModal(categoryName, productName);
-            } catch (err) { tg.showAlert(err.message || 'Không thể cập nhật giá Sell.'); }
+                tg.showAlert(`Đã cập nhật ${label} thành ${parsed.toLocaleString('vi-VN')}đ và lưu vào database.`);
+                openProductPriceDurationModal(categoryName,productName);
+            } catch(e) { tg.showAlert(e.message || 'Không thể cập nhật giá.'); }
+        }
+
+        async function openProductSaleToggleModal(categoryId = null) {
+            try {
+                const ov=await adminOverview();
+                const title=document.getElementById('price-modal-title');
+                const desc=document.getElementById('price-modal-desc');
+                const body=document.getElementById('price-modal-body');
+                title.textContent='⛔ DỪNG BÁN / BẬT BÁN LẠI';
+                desc.textContent='Chọn sản phẩm. Dừng bán sẽ ẩn khỏi Bot và Mini App nhưng không xóa dữ liệu, key hoặc lịch sử.';
+                body.innerHTML='';
+                (ov.products||[]).filter(prod => categoryId === null || Number(prod.category_id) === Number(categoryId)).forEach(prod=>{
+                    const row=document.createElement('div'); row.className='category-option-item'; row.style.marginBottom='8px';
+                    row.innerHTML=`<div style="min-width:0;flex:1"><h5 style="margin:0;color:#fff;font-size:13px;">${prod.name}</h5><p style="margin:3px 0 0;color:var(--text-sub);font-size:10px;">${prod.category_name} · ${prod.is_active?'🟢 Đang bán':'⛔ Đã dừng'}</p></div><strong style="color:${prod.is_active?'#ff6677':'#00e5a8'}">${prod.is_active?'Dừng bán':'Bật lại'}</strong>`;
+                    row.onclick=async()=>{ if(!confirm(`${prod.is_active?'Dừng bán':'Bật bán lại'} sản phẩm ${prod.name}?`)) return; try { const r=await adminApi('toggle_product_sale',{product_id:Number(prod.id)}); await loadCatalog({force:true}); tg.showAlert(r.message); openProductSaleToggleModal(categoryId); } catch(e){tg.showAlert(e.message||'Không thể cập nhật trạng thái bán.');} };
+                    body.appendChild(row);
+                });
+                document.getElementById('admin-price-modal').classList.add('open');
+            } catch(e) { tg.showAlert(e.message||'Không tải được danh sách sản phẩm.'); }
         }
 
         function closePriceModal(event) {
@@ -1481,15 +1435,14 @@ function renderCategoryIconPreview(catName) {
                 }
                 const ov=await adminOverview();
                 const cats=(ov.categories||[]).map(x=>`${x.id}: ${x.name}`).join('\n') || 'Chưa có danh mục';
-                const products=(ov.products||[]).map(x=>`${x.id}: ${x.name}${x.is_active ? ' [ĐANG BÁN]' : ' [ĐÃ DỪNG]'}`).join('\n') || 'Chưa có sản phẩm';
+                const products=(ov.products||[]).map(x=>`${x.id}: ${x.name}`).join('\n') || 'Chưa có sản phẩm';
                 const options=(ov.options||[]).map(x=>`${x.id}: ${x.product_name} – ${x.duration_label} (giá ${x.price})`).join('\n') || 'Chưa có gói';
                 let fields={};
                 if(actionType==='add_category') { fields.name=adminAsk('Tên danh mục mới:'); if(!fields.name)return; }
                 else if(actionType==='add_product') { tg.showAlert('Danh mục:\n'+cats); fields.category_id=Number(adminAsk('ID danh mục:')); fields.name=adminAsk('Tên sản phẩm:'); if(!fields.category_id||!fields.name)return; }
                 else if(actionType==='map_shop') { tg.showAlert('Các gói:\n'+options); fields.option_id=Number(adminAsk('ID gói sản phẩm:')); fields.shopyuri_product_id=adminAsk('ID sản phẩm trên shop:'); if(!fields.option_id||!fields.shopyuri_product_id)return; }
                 else if(actionType==='edit_price'||actionType==='edit_sell_price') { tg.showAlert('Các gói:\n'+options); fields.option_id=Number(adminAsk('ID gói cần sửa:')); fields.price=Number(adminAsk('Giá mới (VNĐ):')); if(!fields.option_id||isNaN(fields.price))return; }
-                else if(actionType==='delete_category') { tg.showAlert('Danh mục:\n'+cats); fields.id=Number(adminAsk('Nhập ID danh mục cần xóa:')); if(!fields.id)return; if(!confirm('Xác nhận xóa danh mục?'))return; }
-                else if(actionType==='stop_product'||actionType==='enable_product') { const filtered=(ov.products||[]).filter(x=>actionType==='stop_product' ? x.is_active : !x.is_active); const list=filtered.map(x=>`${x.id}: ${x.name}`).join('\n') || 'Không có sản phẩm phù hợp'; tg.showAlert((actionType==='stop_product'?'Sản phẩm đang bán:\n':'Sản phẩm đã dừng:\n')+list); if(!filtered.length)return; fields.id=Number(adminAsk(actionType==='stop_product'?'Nhập ID sản phẩm cần Dừng bán:':'Nhập ID sản phẩm cần Bật bán lại:')); if(!fields.id || !filtered.some(x=>Number(x.id)===fields.id))return; if(!confirm(actionType==='stop_product'?'Dừng bán sản phẩm này? Dữ liệu và key vẫn được giữ.':'Bật bán lại sản phẩm này?'))return; }
+                else if(actionType==='delete_category'||actionType==='delete_product') { tg.showAlert(actionType==='delete_category'?'Danh mục:\n'+cats:'Sản phẩm:\n'+products); fields.id=Number(adminAsk('Nhập ID cần xóa:')); if(!fields.id)return; if(!confirm('Xác nhận xóa?'))return; }
                 const r=await adminApi(actionType,fields); tg.showAlert(r.message || 'Thành công.');
                 await loadCatalog({force:true}); await refreshAccountData();
             } catch(e) { tg.showAlert(e.message || 'Lỗi thao tác Admin.'); }
