@@ -50,6 +50,9 @@ QR_TEMPLATE = os.getenv('QR_TEMPLATE', 'compact').strip()
 QR_SHOWINFO = os.getenv('QR_SHOWINFO', 'false').strip().lower()
 QR_MEMO_PREFIX = 'SEVQR'
 QR_MEMO_SUFFIX = os.getenv('QR_MEMO_SUFFIX', 'NAP').strip().upper() or 'NAP'
+SEPAY_GROUP_ID = int(os.getenv('SEPAY_GROUP_ID', '-1004405246932').strip() or '-1004405246932')
+SEPAY_SENDER_ID_RAW = os.getenv('SEPAY_SENDER_ID', '').strip()
+SEPAY_SENDER_ID = int(SEPAY_SENDER_ID_RAW) if SEPAY_SENDER_ID_RAW.lstrip('-').isdigit() else None
 MINI_APP_URL = os.getenv('MINI_APP_URL', '').strip()
 CUSTOM_BUTTON_EMOJI_ID = '6168207816042487487'
 DB_POOL = None
@@ -249,6 +252,14 @@ def init_db():
         '''CREATE TABLE IF NOT EXISTS deposits (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id),
             amount BIGINT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', note TEXT, created_at TEXT NOT NULL)''',
+        '''CREATE TABLE IF NOT EXISTS sepay_transactions (
+            memo TEXT PRIMARY KEY, amount BIGINT NOT NULL, chat_id BIGINT NOT NULL,
+            message_id BIGINT NOT NULL, sender_id BIGINT, received_at TEXT NOT NULL,
+            matched_deposit_id BIGINT UNIQUE REFERENCES deposits(id))''',
+        "ALTER TABLE deposits ADD COLUMN IF NOT EXISTS sepay_memo TEXT",
+        "ALTER TABLE deposits ADD COLUMN IF NOT EXISTS sepay_matched_at TEXT",
+        "ALTER TABLE deposits ADD COLUMN IF NOT EXISTS auto_approved BOOLEAN NOT NULL DEFAULT FALSE",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_deposits_sepay_memo ON deposits(sepay_memo) WHERE sepay_memo IS NOT NULL",
         '''CREATE TABLE IF NOT EXISTS balance_transactions (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id),
             admin_id BIGINT NOT NULL, action TEXT NOT NULL CHECK(action IN ('add','subtract','deposit')) ,
@@ -929,6 +940,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             con.execute("UPDATE deposits SET status='submitted' WHERE id=?", (deposit_id,))
         await q.edit_message_caption(caption=f"📨 Đã gửi yêu cầu xác nhận nạp #{deposit_id}. Admin sẽ kiểm tra giao dịch.\n💰 Số tiền: {dep['amount']:,}đ\n📝 Nội dung: {dep['note']}", reply_markup=None)
         await notify_admins(context, deposit_id, dep['amount'], dep['note'], dep['full_name'], user.id, dep['username'])
+        asyncio.create_task(auto_approve_deposit_after_delay(deposit_id, 5))
     elif data.startswith('deposit:cancel:'):
         deposit_id = int(data.split(':')[2])
         with db() as con:
@@ -1521,6 +1533,105 @@ async def show_admin_user(msg, uid):
         reply_markup=kb, parse_mode='HTML'
     )
 
+def extract_sepay_memo(message_text):
+    # Extract the contiguous transfer-content token beginning with SEVQR.
+    match = re.search(r'(?i)(SEVQR[A-Z0-9_-]+)', str(message_text or ''))
+    return match.group(1).upper() if match else None
+
+
+def extract_sepay_incoming_amount(message_text):
+    match = re.search(r'(?i)Tiền\s*vào\s*:\s*([0-9][0-9,\.\s]*)\s*đ', str(message_text or ''))
+    if not match:
+        return None
+    digits = re.sub(r'\D', '', match.group(1))
+    try:
+        return int(digits) if digits else None
+    except ValueError:
+        return None
+
+
+async def auto_approve_deposit_after_delay(deposit_id, delay=5):
+    # Credit once only after exact memo and amount match.
+    await asyncio.sleep(delay)
+    approved = None
+    with db() as con:
+        dep = con.execute('''SELECT d.*,u.username,u.full_name
+            FROM deposits d JOIN users u ON u.user_id=d.user_id
+            WHERE d.id=? FOR UPDATE OF d''', (deposit_id,)).fetchone()
+        if not dep or dep['status'] != 'submitted' or not dep['note']:
+            return
+        event = con.execute('''SELECT * FROM sepay_transactions
+            WHERE memo=? AND amount=? AND matched_deposit_id IS NULL
+            FOR UPDATE''', (str(dep['note']).upper(), int(dep['amount']))).fetchone()
+        if not event:
+            return
+        # A QR request is valid for five minutes; reject notifications received outside that window.
+        try:
+            created = dep['created_at']
+            created_dt = datetime.fromisoformat(created.replace('Z', '+00:00')) if isinstance(created, str) else created
+            received_dt = datetime.fromisoformat(event['received_at'].replace('Z', '+00:00')) if isinstance(event['received_at'], str) else event['received_at']
+            if created_dt.tzinfo is None: created_dt = created_dt.replace(tzinfo=timezone.utc)
+            if received_dt.tzinfo is None: received_dt = received_dt.replace(tzinfo=timezone.utc)
+            if received_dt < created_dt or (received_dt - created_dt).total_seconds() > 300:
+                return
+        except Exception:
+            log.exception('Could not validate SePay/deposit timestamps for #%s', deposit_id)
+            return
+        con.execute('UPDATE users SET balance=balance+? WHERE user_id=?', (dep['amount'], dep['user_id']))
+        bal = con.execute('SELECT balance FROM users WHERE user_id=?', (dep['user_id'],)).fetchone()['balance']
+        con.execute('''INSERT INTO balance_transactions(user_id,admin_id,action,amount,balance_after,note,created_at)
+            VALUES(?,?,'deposit',?,?,?,?)''', (dep['user_id'], 0, dep['amount'], bal, f"Tự động duyệt SePay #{deposit_id}", now()))
+        con.execute("UPDATE deposits SET status='approved',auto_approved=TRUE,sepay_memo=?,sepay_matched_at=? WHERE id=?", (event['memo'], now(), deposit_id))
+        con.execute('UPDATE sepay_transactions SET matched_deposit_id=? WHERE memo=? AND matched_deposit_id IS NULL', (deposit_id, event['memo']))
+        approved = {'user_id': dep['user_id'], 'amount': dep['amount'], 'balance': bal,
+                    'name': dep['full_name'], 'username': dep['username'], 'memo': event['memo'],
+                    'deposit_id': deposit_id}
+    if approved:
+        try:
+            await telegram_application.bot.send_message(
+                chat_id=approved['user_id'],
+                text=(f"🎉 NẠP TIỀN TỰ ĐỘNG THÀNH CÔNG!\n🧾 Đơn: #{deposit_id}\n"
+                      f"💰 Đã cộng: {approved['amount']:,}đ\n📝 Nội dung: {approved['memo']}\n"
+                      f"💳 Số dư: {approved['balance']:,}đ")
+            )
+        except Exception:
+            log.exception('Could not notify user about auto-approved deposit #%s', deposit_id)
+        for aid in ADMIN_IDS:
+            try:
+                await telegram_application.bot.send_message(
+                    chat_id=aid,
+                    text=(f"✅ SEPAY TỰ ĐỘNG DUYỆT THÀNH CÔNG\nĐơn: #{deposit_id}\n"
+                          f"User ID: {approved['user_id']}\nSố tiền: {approved['amount']:,}đ\n"
+                          f"Nội dung: {approved['memo']}\nSố dư mới: {approved['balance']:,}đ")
+                )
+            except Exception:
+                log.exception('Could not notify admin about auto-approved deposit #%s', deposit_id)
+
+
+async def sepay_transaction_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    if not msg or msg.chat_id != SEPAY_GROUP_ID or not msg.text:
+        return
+    sender = msg.from_user
+    # Ignore human-authored posts; optionally pin the exact SePay bot sender ID in Railway.
+    if not sender or not sender.is_bot:
+        return
+    if SEPAY_SENDER_ID is not None and sender.id != SEPAY_SENDER_ID:
+        return
+    memo = extract_sepay_memo(msg.text)
+    amount = extract_sepay_incoming_amount(msg.text)
+    if not memo or amount is None or amount <= 0:
+        return
+    with db() as con:
+        con.execute('''INSERT INTO sepay_transactions(memo,amount,chat_id,message_id,sender_id,received_at)
+            VALUES(?,?,?,?,?,?) ON CONFLICT(memo) DO NOTHING''',
+            (memo, amount, msg.chat_id, msg.message_id, sender.id, now()))
+        matches = con.execute("SELECT id FROM deposits WHERE note=? AND amount=? AND status='submitted' ORDER BY id DESC LIMIT 2", (memo, amount)).fetchall()
+    # Trigger the same delayed, locked/idempotent approval path whether SePay or user submits first.
+    for row in matches:
+        asyncio.create_task(auto_approve_deposit_after_delay(int(row['id']), 5))
+
+
 async def notify_admins(context, deposit_id, amount, memo, full_name, uid, username):
     username_text = '@' + username if username else 'Không có'
     body = (f"💳 YÊU CẦU XÁC NHẬN NẠP TIỀN\n\n🧾 Mã đơn: #{deposit_id}\n💰 Số tiền: {amount:,}đ\n📝 Nội dung CK: {memo}\n👤 Tên: {escape(full_name or 'Không có')}\n🆔 ID: {uid}\n📛 Username: {escape(username_text)}\n🕒 Thời gian xác nhận: {now_vn()} (GMT+7)\n\nKiểm tra giao dịch ngân hàng trước khi duyệt.")
@@ -1544,6 +1655,7 @@ async def handle_deposit_review(q, context, data):
                 row = con.execute('SELECT balance FROM users WHERE user_id=?', (dep['user_id'],)).fetchone()
                 con.execute("INSERT INTO balance_transactions(user_id,admin_id,action,amount,balance_after,note,created_at) VALUES(?,?,'deposit',?,?,?,?)", (dep['user_id'], q.from_user.id, dep['amount'], row['balance'], f"Duyệt nạp #{deposit_id}", now()))
                 con.execute("UPDATE deposits SET status='approved' WHERE id=?", (deposit_id,))
+                con.execute("UPDATE sepay_transactions SET matched_deposit_id=? WHERE memo=? AND matched_deposit_id IS NULL", (deposit_id, dep['note']))
                 username_text = '@' + dep['username'] if dep['username'] else 'Không có username'
                 result = (f"🎉 DUYỆT NẠP TIỀN THÀNH CÔNG!\n\n🧾 Đơn thứ tự: #{deposit_id}\n💰 Đã cộng: {dep['amount']:,}đ\n👤 Người dùng: {escape(dep['full_name'] or 'Không có tên')}\n📛 Username: {escape(username_text)}\n🆔 ID: <code>{dep['user_id']}</code>\n💳 Số dư hiện tại: {row['balance']:,}đ")
                 username_notice = '@' + dep['username'] if dep['username'] else 'Không có'
@@ -1652,7 +1764,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await msg.reply_text(f'⏳ Bạn cần chờ {max(1, int(30 - elapsed))} giây nữa mới tạo được đơn nạp mới.'); return
                 dep = con.execute("INSERT INTO deposits(user_id,amount,status,note,created_at) VALUES(?,?,'pending',NULL,?) RETURNING id", (uid, amount, now())).fetchone()
                 deposit_id = dep['id']; memo = f'{QR_MEMO_PREFIX}{uid}{QR_MEMO_SUFFIX}{deposit_id}'
-                con.execute('UPDATE deposits SET note=? WHERE id=?', (memo, deposit_id))
+                con.execute('UPDATE deposits SET note=?,sepay_memo=? WHERE id=?', (memo, memo, deposit_id))
                 con.execute('UPDATE users SET last_deposit_request_at=? WHERE user_id=?', (datetime.now(timezone.utc), uid))
             context.user_data['flow'] = None
             qr_url = make_qr_url(amount, memo)
@@ -2103,6 +2215,29 @@ async def api_purchase(request: Request):
             'quantity':qty,'guide_url':guide_url,'message':'Mua hàng thành công.'}
 
 
+@web_app.get("/api/deposits/active")
+async def api_active_deposit(request: Request):
+    user = _mini_user(request)
+    with db() as con:
+        con.execute("UPDATE deposits SET status='expired' WHERE user_id=? AND status='pending' AND created_at::timestamptz < NOW() - INTERVAL '5 minutes'", (user['id'],))
+        dep = con.execute("SELECT id,amount,status,note,created_at FROM deposits WHERE user_id=? AND status IN ('pending','submitted') ORDER BY id DESC LIMIT 1", (user['id'],)).fetchone()
+    if not dep:
+        return {'active': None}
+    try:
+        created = dep['created_at']
+        created_dt = datetime.fromisoformat(created.replace('Z','+00:00')) if isinstance(created,str) else created
+        if created_dt.tzinfo is None: created_dt = created_dt.replace(tzinfo=timezone.utc)
+        remaining = max(0, 300 - int((datetime.now(timezone.utc)-created_dt).total_seconds()))
+    except Exception:
+        remaining = 0
+    if remaining <= 0:
+        return {'active': None}
+    return {'active': {'deposit_id': int(dep['id']), 'amount': int(dep['amount']),
+        'status': dep['status'], 'transfer_content': dep['note'],
+        'qr_url': make_qr_url(int(dep['amount']), str(dep['note'])) + '&v=' + str(dep['id']),
+        'expires_in': remaining}}
+
+
 @web_app.post('/api/deposits')
 async def api_create_deposit(request: Request):
     user=_mini_user(request); payload=await request.json()
@@ -2137,7 +2272,7 @@ async def api_create_deposit(request: Request):
         row=con.execute("INSERT INTO deposits(user_id,amount,status,note,created_at) VALUES(?,?,'pending','',?) RETURNING id",(user['id'],amount,now())).fetchone()
         did=int(row['id'])
         memo=f'{QR_MEMO_PREFIX}{user["id"]}{QR_MEMO_SUFFIX}{did}'
-        con.execute('UPDATE deposits SET note=? WHERE id=?',(memo,did))
+        con.execute('UPDATE deposits SET note=?,sepay_memo=? WHERE id=?',(memo,memo,did))
     return {'deposit_id':did,'amount':amount,'transfer_content':memo,
             'qr_url':make_qr_url(amount,memo) + '&v=' + str(did),
             'expires_in':300,'status':'pending'}
@@ -2150,7 +2285,8 @@ async def api_submit_deposit(deposit_id: int, request: Request):
         dep=con.execute('SELECT d.*,u.full_name,u.username FROM deposits d JOIN users u ON u.user_id=d.user_id WHERE d.id=? AND d.user_id=? FOR UPDATE',(deposit_id,user['id'])).fetchone()
         if not dep: raise HTTPException(status_code=404,detail='Không tìm thấy đơn nạp.')
         if dep['status']=='submitted':
-            return {'success':True,'already_submitted':True,'message':'Bot đang xét duyệt đơn nạp tiền của bạn. Vui lòng không gửi spam yêu cầu cho Admin.'}
+            asyncio.create_task(auto_approve_deposit_after_delay(deposit_id, 5))
+            return {'success':True,'already_submitted':True,'message':'Yêu cầu đã gửi trước đó; bot tiếp tục đối chiếu giao dịch.'}
         if dep['status']!='pending': raise HTTPException(status_code=400,detail='Đơn nạp đã được xử lý hoặc hết hạn.')
         con.execute("UPDATE deposits SET status='submitted' WHERE id=?",(deposit_id,))
     body=(f'💳 YÊU CẦU XÁC NHẬN NẠP TIỀN\n\n🧾 Mã đơn: #{deposit_id}\n💰 Số tiền: {dep["amount"]:,}đ\n📝 Nội dung CK: {dep["note"]}\n👤 Tên: {dep["full_name"] or "Không có"}\n🆔 ID: {user["id"]}\n📛 Username: @{dep["username"] or "Không có"}\n\nKiểm tra giao dịch ngân hàng trước khi duyệt.')
@@ -2158,7 +2294,8 @@ async def api_submit_deposit(deposit_id: int, request: Request):
     for aid in ADMIN_IDS:
         try: await asyncio.to_thread(_telegram_http,'sendMessage',{'chat_id':aid,'text':body,'reply_markup':kb})
         except Exception: log.exception('Cannot notify admin for deposit %s',deposit_id)
-    return {'success':True,'message':'Đã gửi yêu cầu một lần. Bot đang xét duyệt đơn nạp tiền của bạn. Vui lòng không gửi spam yêu cầu cho Admin.'}
+    asyncio.create_task(auto_approve_deposit_after_delay(deposit_id, 5))
+    return {'success':True,'message':'Đã gửi yêu cầu một lần. Bot đang đối chiếu giao dịch; nếu nội dung và số tiền khớp, hệ thống sẽ tự duyệt sau 5 giây.'}
 
 
 @web_app.get('/api/admin/overview')
@@ -2641,7 +2778,9 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(configure_miniapp_menu_button).build()
     telegram_application = app
     app.add_handler(CommandHandler('start', start)); app.add_handler(CommandHandler('admin', admin_cmd))
-    app.add_handler(CallbackQueryHandler(callback)); app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, text_handler))
+    app.add_handler(CallbackQueryHandler(callback))
+    app.add_handler(MessageHandler(filters.Chat(chat_id=SEPAY_GROUP_ID) & filters.TEXT, sepay_transaction_handler), group=-1)
+    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, text_handler))
     app.add_error_handler(error_handler)
     port = int(os.getenv('PORT', '3000'))
     web_thread = threading.Thread(target=lambda: uvicorn.run(web_app, host='0.0.0.0', port=port, log_level='info'), daemon=True)

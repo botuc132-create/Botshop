@@ -51,3 +51,15 @@ Tạo QR chỉ tạo đơn nạp `pending`. Khi người dùng bấm **ĐÃ CHUY
 5. Thử nạp tiền bằng số nhỏ; chỉ admin duyệt sau khi xác nhận tiền thực nhận.
 
 Chỉ chạy **một bản polling** cho mỗi bot token. Nếu dùng VPS, mở cổng `PORT` và cấu hình reverse proxy/domain HTTPS để Telegram Mini App truy cập được.
+
+
+## Tự động đối chiếu SePay
+
+- Thêm bot cửa hàng vào nhóm thông báo SePay có ID `-1004405246932`. Bot phải nhận được tin nhắn mới trong nhóm (cấp quyền phù hợp hoặc tắt Group Privacy cho bot qua BotFather).
+- Có thể đặt `SEPAY_GROUP_ID=-1004405246932` trong Railway Variables nếu dùng nhóm khác.
+- Nên đặt `SEPAY_SENDER_ID` thành ID số của bot gửi thông báo SePay để chỉ nhận đúng nguồn tin. Khi đặt biến này, mọi bot gửi tin từ ID khác đều bị bỏ qua.
+- Hệ thống chỉ trích xuất token liên tục bắt đầu bằng `SEVQR` (ví dụ `SEVQR7776471599NAP296`), so khớp chính xác với mã của đơn và đồng thời kiểm tra số tiền vào khớp số tiền nạp. Không khớp thì không tự cộng tiền.
+- Khi người dùng bấm “Đã chuyển tiền”, bot gửi yêu cầu cho Admin. Nếu có giao dịch SePay hợp lệ tương ứng, hệ thống đợi 5 giây rồi duyệt theo giao dịch đã ghi nhận; một mã giao dịch không thể cộng tiền hai lần.
+- Mini App tải lại sẽ khôi phục mã QR đang còn trong hạn 5 phút; hết hạn thì mã QR được ẩn.
+
+**Lưu ý:** Telegram chỉ chuyển cho bot các tin nhắn mới mà bot được phép đọc; bot không thể tự đọc lịch sử cũ trong nhóm. Cần triển khai và kiểm tra một giao dịch thử số tiền nhỏ trước khi bật dùng thật.

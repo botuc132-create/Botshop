@@ -1274,6 +1274,45 @@ function renderCategoryIconPreview(catName) {
             });
         }
 
+        function renderDepositQR(data, scrollIntoView = false) {
+            activeDeposit = data;
+            const container = document.getElementById('qr-result-container');
+            const qrImage = document.getElementById('viet-qr-img');
+            qrImage.src = data.qr_url;
+            document.getElementById('qr-display-amount').innerText = Number(data.amount).toLocaleString('vi-VN') + 'đ';
+            container.style.display = 'block';
+            const paidButton = container.querySelector('button');
+            const statusLabel = container.querySelector('div:first-child');
+            const submitted = data.status === 'submitted';
+            statusLabel.textContent = submitted ? 'ĐANG CHỜ ĐỐI CHIẾU GIAO DỊCH' : 'ĐANG THANH TOÁN';
+            paidButton.disabled = submitted || Number(data.expires_in || 0) <= 0;
+            paidButton.textContent = submitted ? 'BOT ĐANG XÉT DUYỆT' : 'ĐÃ CHUYỂN TIỀN';
+            let memoNode = document.getElementById('deposit-transfer-content');
+            if (!memoNode) {
+                memoNode = document.createElement('div');
+                memoNode.id = 'deposit-transfer-content';
+                memoNode.style.cssText = 'color:#ffcc00;font-weight:800;margin:10px 0;word-break:break-all;';
+                container.insertBefore(memoNode, paidButton);
+            }
+            memoNode.textContent = 'NỘI DUNG CK: ' + data.transfer_content;
+            startCountdown(Number(data.expires_in || 0));
+            if (scrollIntoView) container.scrollIntoView({behavior:'smooth'});
+        }
+
+        async function restoreActiveDeposit() {
+            try {
+                const response = await apiRequest('/api/deposits/active');
+                if (response.active) {
+                    renderDepositQR(response.active, false);
+                } else {
+                    activeDeposit = null;
+                    document.getElementById('qr-result-container').style.display = 'none';
+                }
+            } catch (error) {
+                console.warn('Không khôi phục được mã QR đang chờ:', error);
+            }
+        }
+
         async function createDepositQR() {
             const amount = Number(document.getElementById('deposit-amount').value);
             if (!Number.isSafeInteger(amount) || amount < 2000) {
@@ -1288,28 +1327,7 @@ function renderCategoryIconPreview(catName) {
                     method: 'POST',
                     body: JSON.stringify({amount})
                 });
-                activeDeposit = data;
-                const qrImage = document.getElementById('viet-qr-img');
-                qrImage.src = data.qr_url;
-                document.getElementById('qr-display-amount').innerText = Number(data.amount).toLocaleString('vi-VN') + 'đ';
-                document.getElementById('qr-result-container').style.display = 'block';
-                
-                const paidButton = document.querySelector('#qr-result-container button');
-                const statusLabel = document.querySelector('#qr-result-container > div:first-child');
-                statusLabel.textContent = 'ĐANG THANH TOÁN';
-                paidButton.disabled = false;
-                paidButton.textContent = 'ĐÃ CHUYỂN TIỀN';
-                startCountdown(300);
-
-                let memoNode = document.getElementById('deposit-transfer-content');
-                if (!memoNode) {
-                    memoNode = document.createElement('div');
-                    memoNode.id = 'deposit-transfer-content';
-                    memoNode.style.cssText = 'color:#ffcc00;font-weight:800;margin:10px 0;word-break:break-all;';
-                    document.querySelector('#qr-result-container').insertBefore(memoNode, document.querySelector('#qr-result-container button'));
-                }
-                memoNode.textContent = 'NỘI DUNG CK: ' + data.transfer_content;
-                document.getElementById('qr-result-container').scrollIntoView({behavior:'smooth'});
+                renderDepositQR(data, true);
                 tg.HapticFeedback?.notificationOccurred('success');
             } catch (error) {
                 tg.showAlert(error.message);
@@ -1332,6 +1350,10 @@ function renderCategoryIconPreview(catName) {
                     clearInterval(countdownInterval);
                     display.textContent = '00:00 (Hết hạn)';
                     if (paidButton) paidButton.disabled = true;
+                    if (activeDeposit && Number(activeDeposit.expires_in || 0) > 0) {
+                        activeDeposit = null;
+                        document.getElementById('qr-result-container').style.display = 'none';
+                    }
                     return;
                 }
                 timer -= 1;
@@ -1356,8 +1378,8 @@ function renderCategoryIconPreview(catName) {
                 });
                 tg.HapticFeedback?.notificationOccurred('success');
                 tg.showAlert(data.message || 'Đã gửi yêu cầu nạp tiền tới Admin.');
-                if (submitButton) submitButton.textContent = 'BOT ĐANG XÉT DUYỆT';
-                if (countdownInterval) clearInterval(countdownInterval);
+                if (submitButton) submitButton.textContent = 'BOT ĐANG ĐỐI CHIẾU';
+                if (activeDeposit) activeDeposit.status = 'submitted';
                 await refreshAccountData();
             } catch (error) {
                 tg.showAlert(error.message);
@@ -1517,6 +1539,7 @@ function renderCategoryIconPreview(catName) {
 
         startSmoothLoadingBar();
         refreshAccountData();
+        restoreActiveDeposit();
         loadCatalog();
         if (balanceRefreshInterval) clearInterval(balanceRefreshInterval);
         balanceRefreshInterval = setInterval(refreshAccountData, 15000);
