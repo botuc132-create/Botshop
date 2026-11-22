@@ -118,6 +118,7 @@ ADMIN_KB = InlineKeyboardMarkup([
     [quick_button('Thêm key sản phẩm', callback_data='adm:addkeys')],
     [quick_button('Kiểm tra kho', callback_data='adm:stock')],
     [quick_button('Bảo trì: Bật / Tắt', callback_data='adm:maintenance')],
+    [quick_button('🤖 Tự duyệt SePay: Bật / Tắt', callback_data='adm:sepay_toggle')],
     [quick_button('Kho Emoji NewsEmoji', callback_data='adm:emoji')],
 ])
 
@@ -307,10 +308,19 @@ def user_menu_text(user, balance):
 
 def admin_menu_text(): return '🛠 QUẢN TRỊ SHOP\nChọn chức năng bên dưới:'
 
-def maintenance_enabled():
+def get_bot_setting(key, default='off'):
     with db() as con:
-        row=con.execute("SELECT setting_value FROM bot_settings WHERE setting_key='maintenance'").fetchone()
-    return bool(row and row['setting_value']=='on')
+        row = con.execute('SELECT setting_value FROM bot_settings WHERE setting_key=?', (key,)).fetchone()
+    return row['setting_value'] if row else default
+
+def set_bot_setting(key, value):
+    with db() as con:
+        con.execute('''INSERT INTO bot_settings(setting_key,setting_value,updated_at) VALUES(?,?,?)
+            ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=EXCLUDED.updated_at''',
+            (key, str(value), now()))
+
+def maintenance_enabled():
+    return get_bot_setting('maintenance', 'off') == 'on'
 
 def main_menu_markup():
     rows = []
@@ -940,7 +950,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             con.execute("UPDATE deposits SET status='submitted' WHERE id=?", (deposit_id,))
         await q.edit_message_caption(caption=f"📨 Đã gửi yêu cầu xác nhận nạp #{deposit_id}. Admin sẽ kiểm tra giao dịch.\n💰 Số tiền: {dep['amount']:,}đ\n📝 Nội dung: {dep['note']}", reply_markup=None)
         await notify_admins(context, deposit_id, dep['amount'], dep['note'], dep['full_name'], user.id, dep['username'])
-        asyncio.create_task(auto_approve_deposit_after_delay(deposit_id, 5))
+        asyncio.create_task(auto_approve_deposit_after_delay(deposit_id, 6))
     elif data.startswith('deposit:cancel:'):
         deposit_id = int(data.split(':')[2])
         with db() as con:
@@ -996,6 +1006,21 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop('pending_purchase', None)
         await q.edit_message_text('Đã hủy đơn mua hàng.', reply_markup=inline_back('shop:home'))
     elif data == 'adm:menu': await q.edit_message_text(admin_menu_text(), reply_markup=ADMIN_KB)
+    elif data == 'adm:sepay_toggle':
+        current = get_bot_setting('sepay_auto_approve', 'on')
+        updated = 'off' if current == 'on' else 'on'
+        set_bot_setting('sepay_auto_approve', updated)
+        state_text = '🟢 ĐANG BẬT' if updated == 'on' else '🔴 ĐANG TẮT'
+        await q.edit_message_text(
+            '🤖 QUẢN LÝ TỰ DUYỆT SEPAY\n\n'
+            f'Trạng thái: {state_text}\n'
+            f'Nhóm theo dõi: {SEPAY_GROUP_ID}\n'
+            f'ID người gửi lọc: {SEPAY_SENDER_ID if SEPAY_SENDER_ID is not None else "Không lọc"}\n'
+            'Thời gian chờ: 6 giây\n\n'
+            'Bot chỉ tự duyệt khi nhận được tin giao dịch hợp lệ trong nhóm, khớp chính xác mã đơn và số tiền. '
+            'Nếu Telegram không chuyển tin nhắn từ bot SePay đến bot shop, chức năng sẽ không nhận được giao dịch.',
+            reply_markup=ADMIN_KB
+        )
     elif data == 'adm:emoji':
         try:
             sticker_set = await context.bot.get_sticker_set(name='NewsEmoji')
@@ -1560,10 +1585,14 @@ def extract_sepay_incoming_amount(message_text):
     return None
 
 
-async def auto_approve_deposit_after_delay(deposit_id, delay=5):
+async def auto_approve_deposit_after_delay(deposit_id, delay=6):
+    # Admin can disable automatic approval at any time from /admin.
+    await asyncio.sleep(delay)
+    if get_bot_setting('sepay_auto_approve', 'on') != 'on':
+        log.info('Automatic SePay approval is disabled; deposit #%s remains for manual review', deposit_id)
+        return
     # Match by the 3 digits after NAP, but require amount, submitted state,
     # 5-minute validity, and a unique candidate. All rows are locked before credit.
-    await asyncio.sleep(delay)
     approved = None
     with db() as con:
         dep = con.execute('SELECT d.*,u.username,u.full_name FROM deposits d JOIN users u ON u.user_id=d.user_id WHERE d.id=? FOR UPDATE OF d', (deposit_id,)).fetchone()
@@ -1670,7 +1699,7 @@ async def sepay_transaction_handler(update: Update, context: ContextTypes.DEFAUL
             ORDER BY id""", (amount, suffix)).fetchall()
     log.info('SePay transaction matched %s submitted deposit(s) by amount and suffix', len(matches))
     for row in matches:
-        asyncio.create_task(auto_approve_deposit_after_delay(int(row['id']), 5))
+        asyncio.create_task(auto_approve_deposit_after_delay(int(row['id']), 6))
 
 
 async def notify_admins(context, deposit_id, amount, memo, full_name, uid, username):
@@ -2326,7 +2355,7 @@ async def api_submit_deposit(deposit_id: int, request: Request):
         dep=con.execute('SELECT d.*,u.full_name,u.username FROM deposits d JOIN users u ON u.user_id=d.user_id WHERE d.id=? AND d.user_id=? FOR UPDATE',(deposit_id,user['id'])).fetchone()
         if not dep: raise HTTPException(status_code=404,detail='Không tìm thấy đơn nạp.')
         if dep['status']=='submitted':
-            asyncio.create_task(auto_approve_deposit_after_delay(deposit_id, 5))
+            asyncio.create_task(auto_approve_deposit_after_delay(deposit_id, 6))
             return {'success':True,'already_submitted':True,'message':'Yêu cầu đã gửi trước đó; bot tiếp tục đối chiếu giao dịch.'}
         if dep['status']!='pending': raise HTTPException(status_code=400,detail='Đơn nạp đã được xử lý hoặc hết hạn.')
         con.execute("UPDATE deposits SET status='submitted' WHERE id=?",(deposit_id,))
@@ -2335,7 +2364,7 @@ async def api_submit_deposit(deposit_id: int, request: Request):
     for aid in ADMIN_IDS:
         try: await asyncio.to_thread(_telegram_http,'sendMessage',{'chat_id':aid,'text':body,'reply_markup':kb})
         except Exception: log.exception('Cannot notify admin for deposit %s',deposit_id)
-    asyncio.create_task(auto_approve_deposit_after_delay(deposit_id, 5))
+    asyncio.create_task(auto_approve_deposit_after_delay(deposit_id, 6))
     return {'success':True,'message':'Đã gửi yêu cầu một lần. Bot đang đối chiếu giao dịch; nếu nội dung và số tiền khớp, hệ thống sẽ tự duyệt sau 5 giây.'}
 
 
