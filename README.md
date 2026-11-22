@@ -21,8 +21,6 @@ Thiết lập trong Railway Variables hoặc file `.env` riêng trên VPS:
 - `QR_BANK`, `QR_ACCOUNT`, `QR_HOLDER`, `QR_TEMPLATE`, `QR_SHOWINFO`, `QR_MEMO_SUFFIX`: cấu hình QR (tùy chọn).
 - `SHOPHENRY_API_TOKEN`, `SHOPHENRY_API_URL`: chỉ cần nếu có sản phẩm Aim Hack dùng ShopHenry.
 - `LOG_LEVEL=INFO` (tùy chọn).
-- `SEPAY_WEBHOOK_API_KEY`: khóa xác thực API Key đã tạo trong cấu hình Webhook SePay (khuyến nghị). Hoặc dùng `SEPAY_WEBHOOK_SECRET` nếu chọn HMAC-SHA256. Không cấu hình cả hai trừ khi bạn chủ động cần hỗ trợ cả hai.
-- `SEPAY_AUTO_APPROVE_DELAY=6`: thời gian chờ trước khi tự duyệt (giây).
 
 Không đưa `.env`, bot token hoặc database password lên GitHub.
 
@@ -42,11 +40,7 @@ Vào **Cá nhân → Quản trị Admin**. Danh sách chức năng được xác
 
 Mini App và Telegram bot cùng sử dụng `DATABASE_URL`. Khi cập nhật code, không đổi sang database mới hoặc xóa volume/database cũ nếu muốn giữ số dư, người dùng, lịch sử và kho key.
 
-Tạo QR tạo đơn nạp `pending` với nội dung riêng dạng `SEVQR{user_id}NAP{deposit_id}`. Endpoint nhận giao dịch SePay là `https://<domain-Railway>/webhook/sepay`. Cấu hình Webhook SePay nhận tiền vào (`In_only`), xác thực bằng API Key hoặc HMAC-SHA256, và đặt đúng URL trên. Trong Railway Variables, đặt cùng khóa vào `SEPAY_WEBHOOK_API_KEY` (nếu dùng API Key) hoặc `SEPAY_WEBHOOK_SECRET` (nếu dùng HMAC-SHA256).
-
-Khi webhook báo giao dịch tiền vào, bot chỉ khớp nội dung chuyển khoản và số tiền chính xác với một đơn đang `pending`/`submitted`. Sau 6 giây, bot cộng tiền và đổi trạng thái `approved` trong cùng giao dịch database. Bảng `sepay_webhook_events` dùng ID giao dịch SePay làm khóa chính để webhook retry/replay không cộng tiền hoặc ghi log lần hai. Admin vẫn nhận thông báo khi tự duyệt; nút duyệt thủ công vẫn được giữ làm phương án dự phòng.
-
-**Lưu ý:** Webhook chỉ hoạt động nếu SePay thực sự nhận được giao dịch ngân hàng và gửi event đến webhook. QR được tạo bởi giao diện không tự đảm bảo webhook sẽ phát sinh; cần thử một giao dịch thực tế hoặc dùng chế độ test của SePay trước khi bật cho người dùng. SePay yêu cầu endpoint phản hồi JSON `{"success": true}` với HTTP 200/201. Xem tài liệu: https://developer.sepay.vn/vi/sepay-webhooks/tich-hop-webhook.
+Tạo QR chỉ tạo đơn nạp `pending`. Khi người dùng bấm **ĐÃ CHUYỂN TIỀN**, bot gửi yêu cầu cho admin; tiền chỉ được cộng sau khi admin kiểm tra sao kê và duyệt. Source chưa có webhook đối soát ngân hàng tự động.
 
 ## Kiểm tra sau deploy
 
@@ -54,7 +48,10 @@ Khi webhook báo giao dịch tiền vào, bot chỉ khớp nội dung chuyển k
 2. Gửi `/start`, mở Mini App từ nút Web App của bot.
 3. Kiểm tra số dư, danh mục, lịch sử.
 4. Đăng nhập bằng một Telegram ID có trong `ADMIN_IDS`, mở tab Cá nhân và thử thống kê.
-5. Cấu hình SePay Webhook URL `https://<domain-Railway>/webhook/sepay`, chọn tiền vào và API Key/HMAC đúng với biến môi trường.
-6. Gửi thử webhook trong SePay hoặc giao dịch nhỏ; kiểm tra log `[SEPAY] MATCHED` rồi `[SEPAY] AUTO_APPROVED`. Chỉ bật cho người dùng sau khi xác nhận giao dịch thật khớp chính xác.
+5. Thử nạp tiền bằng số nhỏ; chỉ admin duyệt sau khi xác nhận tiền thực nhận.
 
 Chỉ chạy **một bản polling** cho mỗi bot token. Nếu dùng VPS, mở cổng `PORT` và cấu hình reverse proxy/domain HTTPS để Telegram Mini App truy cập được.
+
+## SePay Webhook (Railway)
+
+Set `SEPAY_WEBHOOK_API_KEY` to a long random secret and `SEPAY_AUTO_APPROVE_DELAY=6` in Railway Variables. Configure SePay to POST incoming transfers as JSON to `/webhook/sepay` on the public Railway domain, with API Key authorization using the same secret. The endpoint expects SePay's `Authorization: Apikey <secret>` header and matches the generated `SEVQR<telegram_user_id>NAP<deposit_id>` memo and exact incoming amount. It credits once per SePay transaction ID. Test with a small real transfer before relying on automatic approval.

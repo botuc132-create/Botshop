@@ -8,6 +8,7 @@ import hmac
 import hashlib
 import time
 import threading
+import secrets
 from urllib.parse import parse_qsl
 import urllib.request
 import requests
@@ -51,8 +52,7 @@ QR_SHOWINFO = os.getenv('QR_SHOWINFO', 'false').strip().lower()
 QR_MEMO_PREFIX = 'SEVQR'
 QR_MEMO_SUFFIX = os.getenv('QR_MEMO_SUFFIX', 'NAP').strip().upper() or 'NAP'
 SEPAY_WEBHOOK_API_KEY = os.getenv('SEPAY_WEBHOOK_API_KEY', '').strip()
-SEPAY_WEBHOOK_SECRET = os.getenv('SEPAY_WEBHOOK_SECRET', '').strip()
-SEPAY_AUTO_APPROVE_DELAY = max(0, int(os.getenv('SEPAY_AUTO_APPROVE_DELAY', '6') or '6'))
+SEPAY_AUTO_APPROVE_DELAY = max(0, min(60, int(os.getenv('SEPAY_AUTO_APPROVE_DELAY', '6') or '6')))
 MINI_APP_URL = os.getenv('MINI_APP_URL', '').strip()
 CUSTOM_BUTTON_EMOJI_ID = '6168207816042487487'
 DB_POOL = None
@@ -279,8 +279,11 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen DESC)",
         "CREATE INDEX IF NOT EXISTS idx_deposits_user ON deposits(user_id,id DESC)",
         "CREATE INDEX IF NOT EXISTS idx_deposits_status ON deposits(status,id DESC)",
-        "CREATE TABLE IF NOT EXISTS sepay_webhook_events (transaction_id TEXT PRIMARY KEY, payload JSONB NOT NULL, status TEXT NOT NULL DEFAULT 'received', deposit_id BIGINT, received_at TEXT NOT NULL, processed_at TEXT)",
         "CREATE INDEX IF NOT EXISTS idx_balance_transactions_user ON balance_transactions(user_id,id DESC)",
+        "ALTER TABLE deposits ADD COLUMN IF NOT EXISTS sepay_transaction_id TEXT",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_deposits_sepay_transaction ON deposits(sepay_transaction_id) WHERE sepay_transaction_id IS NOT NULL",
+        "CREATE TABLE IF NOT EXISTS sepay_webhook_events (transaction_id TEXT PRIMARY KEY, deposit_id BIGINT, received_at TEXT NOT NULL, payload JSONB)",
+        "CREATE TABLE IF NOT EXISTS discount_coupons (id BIGSERIAL PRIMARY KEY, code CHAR(5) UNIQUE NOT NULL, discount_percent INTEGER NOT NULL CHECK(discount_percent BETWEEN 1 AND 90), max_uses INTEGER NOT NULL CHECK(max_uses > 0), used_count INTEGER NOT NULL DEFAULT 0, is_active BOOLEAN NOT NULL DEFAULT TRUE, created_by BIGINT, created_at TEXT NOT NULL)",
     ]
     with db() as con:
         for index, sql in enumerate(statements, 1):
@@ -2050,7 +2053,15 @@ async def api_purchase(request: Request):
             JOIN products p ON p.id=po.product_id JOIN categories c ON c.id=p.category_id WHERE po.id=? AND p.is_active=TRUE''',(oid,)).fetchone()
         if not u or u['is_locked']: raise HTTPException(status_code=403,detail='Tài khoản không thể mua hàng.')
         if not opt: raise HTTPException(status_code=404,detail='Gói sản phẩm không tồn tại.')
-        price=opt['sell_price'] if u['is_seller'] and opt['sell_price']>0 else opt['price']; total=int(price)*qty
+        price=opt['sell_price'] if u['is_seller'] and opt['sell_price']>0 else opt['price']; subtotal=int(price)*qty
+        voucher_code=str(payload.get('voucher_code') or '').strip()
+        coupon=None; discount=0
+        if voucher_code:
+            coupon=con.execute('SELECT * FROM discount_coupons WHERE code=? AND is_active=TRUE FOR UPDATE',(voucher_code,)).fetchone()
+            if not coupon or int(coupon['used_count']) >= int(coupon['max_uses']):
+                raise HTTPException(status_code=400,detail='Mã giảm giá không hợp lệ hoặc đã hết lượt sử dụng.')
+            discount=(subtotal*int(coupon['discount_percent']))//100
+        total=max(0,subtotal-discount)
         external=bool(opt.get('shopyuri_product_id'))
         actual_supplier_id = str(opt.get('shopyuri_product_id') or '').strip()
         if external and not actual_supplier_id.isdigit():
@@ -2077,6 +2088,8 @@ async def api_purchase(request: Request):
             for k in keys: con.execute("UPDATE product_keys SET status='sold',sold_to=?,sold_at=? WHERE id=?",(user['id'],now(),k['id']))
         purchase_row=con.execute('''INSERT INTO purchases(user_id,category_name,product_name,duration_label,quantity,unit_price,total_price,keys_text,created_at,supplier_order_code)
             VALUES(?,?,?,?,?,?,?,?,?,?) RETURNING id''',(user['id'],opt['category_name'],opt['product_name'],opt['duration_label'],qty,price,total,key_text,now(),supplier_order or None)).fetchone()
+        if coupon:
+            con.execute('UPDATE discount_coupons SET used_count=used_count+1 WHERE id=? AND used_count < max_uses',(coupon['id'],))
         purchase_id=int(purchase_row['id'])
         con.commit()
     except HTTPException:
@@ -2104,111 +2117,123 @@ async def api_purchase(request: Request):
     except Exception: log.exception('Could not send purchased keys to Telegram user %s',user['id'])
     return {'success':True,'purchase_id':purchase_id,'total':total,'total_price':total,'keys_text':key_text,
             'category_name':opt['category_name'],'product_name':opt['product_name'],'duration_label':opt['duration_label'],
-            'quantity':qty,'guide_url':guide_url,'message':'Mua hàng thành công.'}
-
-
-def _sepay_auth_ok(request: Request, raw_body: bytes) -> bool:
-    if not SEPAY_WEBHOOK_API_KEY and not SEPAY_WEBHOOK_SECRET:
-        return False
-    supplied = request.headers.get('authorization', '').strip()
-    if SEPAY_WEBHOOK_API_KEY and hmac.compare_digest(supplied, 'Apikey ' + SEPAY_WEBHOOK_API_KEY):
-        return True
-    if SEPAY_WEBHOOK_SECRET:
-        signature = request.headers.get('x-sepay-signature', '').strip()
-        timestamp = request.headers.get('x-sepay-timestamp', '').strip()
-        if signature.startswith('sha256=') and timestamp.isdigit() and abs(int(time.time()) - int(timestamp)) <= 300:
-            digest = hmac.new(SEPAY_WEBHOOK_SECRET.encode(), timestamp.encode() + b'.' + raw_body, hashlib.sha256).hexdigest()
-            return hmac.compare_digest(signature, 'sha256=' + digest)
-    return False
-
-
-def _normalize_transfer_text(value: str) -> str:
-    return re.sub(r'[^A-Z0-9]', '', str(value or '').upper())
-
-
-async def _sepay_auto_approve(transaction_id: str, deposit_id: int, amount: int):
-    if SEPAY_AUTO_APPROVE_DELAY:
-        await asyncio.sleep(SEPAY_AUTO_APPROVE_DELAY)
-    user_id = balance_after = None
-    with db() as con:
-        event = con.execute('SELECT status FROM sepay_webhook_events WHERE transaction_id=? FOR UPDATE', (transaction_id,)).fetchone()
-        if not event or event['status'] in ('approved', 'ignored'):
-            return
-        dep = con.execute('SELECT * FROM deposits WHERE id=? FOR UPDATE', (deposit_id,)).fetchone()
-        if not dep or int(dep['amount']) != amount or dep['status'] not in ('pending', 'submitted'):
-            con.execute("UPDATE sepay_webhook_events SET status='ignored',processed_at=? WHERE transaction_id=?", (now(), transaction_id))
-            return
-        user = con.execute('SELECT balance FROM users WHERE user_id=? FOR UPDATE', (dep['user_id'],)).fetchone()
-        if not user:
-            con.execute("UPDATE sepay_webhook_events SET status='ignored',processed_at=? WHERE transaction_id=?", (now(), transaction_id))
-            return
-        user_id = int(dep['user_id'])
-        balance_after = int(user['balance']) + amount
-        con.execute('UPDATE users SET balance=? WHERE user_id=?', (balance_after, user_id))
-        con.execute("INSERT INTO balance_transactions(user_id,admin_id,action,amount,balance_after,note,created_at) VALUES(?,?,'deposit',?,?,?,?)",
-                    (user_id, 0, amount, balance_after, f'SePay tự duyệt đơn #{deposit_id} | GD {transaction_id}', now()))
-        con.execute("UPDATE deposits SET status='approved' WHERE id=?", (deposit_id,))
-        con.execute("UPDATE sepay_webhook_events SET status='approved',deposit_id=?,processed_at=? WHERE transaction_id=?", (deposit_id, now(), transaction_id))
-    log.info('[SEPAY] AUTO_APPROVED transaction=%s deposit=%s amount=%s user=%s', transaction_id, deposit_id, amount, user_id)
-    if BOT_TOKEN:
-        user_text = f'🎉 NẠP TIỀN THÀNH CÔNG!\n🧾 Đơn: #{deposit_id}\n💰 Đã cộng: {amount:,}đ\n💳 Số dư: {balance_after:,}đ'
-        try:
-            await asyncio.to_thread(_telegram_http, 'sendMessage', {'chat_id': user_id, 'text': user_text})
-        except Exception:
-            log.exception('[SEPAY] Could not notify user for deposit %s', deposit_id)
-        for admin_id in ADMIN_IDS:
-            try:
-                await asyncio.to_thread(_telegram_http, 'sendMessage', {'chat_id': admin_id, 'text': f'✅ SEPAY TỰ ĐỘNG DUYỆT\n🧾 Đơn: #{deposit_id}\n💰 Số tiền: {amount:,}đ\n🆔 User: {user_id}\n🔖 Mã giao dịch: {transaction_id}'})
-            except Exception:
-                log.exception('[SEPAY] Could not notify admin %s', admin_id)
+            'quantity':qty,'discount':discount,'guide_url':guide_url,'message':'Mua hàng thành công.'}
 
 
 @web_app.post('/webhook/sepay')
 async def sepay_webhook(request: Request):
-    raw_body = await request.body()
-    if not _sepay_auth_ok(request, raw_body):
-        log.warning('[SEPAY] Webhook rejected: invalid/missing authentication')
+    """Receive SePay incoming-transfer webhook and credit only an exact open deposit."""
+    if not SEPAY_WEBHOOK_API_KEY:
+        raise HTTPException(status_code=503, detail='Webhook API key is not configured.')
+    auth = request.headers.get('authorization', '').strip()
+    expected = 'Apikey ' + SEPAY_WEBHOOK_API_KEY
+    if not hmac.compare_digest(auth, expected):
         raise HTTPException(status_code=401, detail='Unauthorized')
     try:
-        payload = json.loads(raw_body.decode('utf-8'))
+        payload = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail='Invalid JSON')
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail='Invalid payload')
-    transaction_id = str(payload.get('id') or payload.get('transaction_id') or '').strip()
-    if not transaction_id:
-        raise HTTPException(status_code=400, detail='Missing transaction id')
+    if str(payload.get('transferType', '')).lower() not in ('in', 'in_only', 'credit', ''):
+        return {'success': True, 'ignored': True, 'reason': 'not incoming'}
     try:
-        amount = int(payload.get('transferAmount') or payload.get('amount') or 0)
+        amount = int(float(payload.get('transferAmount') or payload.get('amount') or 0))
+        txid = str(payload.get('id') or payload.get('transactionId') or '').strip()
+        content = str(payload.get('content') or payload.get('description') or '').upper()
     except Exception:
-        amount = 0
-    transfer_type = str(payload.get('transferType') or payload.get('transfer_type') or '').lower()
-    content = str(payload.get('content') or payload.get('description') or '')
-    if transfer_type and transfer_type != 'in':
-        return {'success': True}
-    if amount <= 0:
-        return {'success': True}
-    normalized_content = _normalize_transfer_text(content)
-    memo_match = re.search(r'(SEVQR\d+' + re.escape(QR_MEMO_SUFFIX) + r'\d+)', normalized_content)
-    if not memo_match:
-        log.info('[SEPAY] Incoming transaction %s has no shop payment memo', transaction_id)
-        return {'success': True}
-    memo = memo_match.group(1)
+        raise HTTPException(status_code=400, detail='Invalid transaction fields')
+    if amount <= 0 or not txid or not content:
+        raise HTTPException(status_code=400, detail='Missing transaction id, amount or content')
+    # Match the exact generated memo, not a partial suffix or a user-provided confirmation.
+    match = re.search(r'SEVQR(\d+)NAP(\d+)', content)
+    if not match:
+        return {'success': True, 'matched': False}
+    uid, did = int(match.group(1)), int(match.group(2))
+    await asyncio.sleep(SEPAY_AUTO_APPROVE_DELAY)
+    approved = None
     with db() as con:
-        inserted = con.execute("INSERT INTO sepay_webhook_events(transaction_id,payload,status,received_at) VALUES(?,?::jsonb,'received',?) ON CONFLICT(transaction_id) DO NOTHING", (transaction_id, json.dumps(payload, ensure_ascii=False), now()))
-        if inserted.rowcount == 0:
-            log.info('[SEPAY] Duplicate webhook ignored transaction=%s', transaction_id)
-            return {'success': True}
-        dep = con.execute("SELECT id,user_id,amount,note,status FROM deposits WHERE regexp_replace(upper(coalesce(note,'')), '[^A-Z0-9]', '', 'g')=? ORDER BY id DESC LIMIT 1 FOR UPDATE", (memo,)).fetchone()
-        if not dep or int(dep['amount']) != amount or dep['status'] not in ('pending', 'submitted'):
-            con.execute("UPDATE sepay_webhook_events SET status='ignored',processed_at=? WHERE transaction_id=?", (now(), transaction_id))
-            log.info('[SEPAY] No exact deposit match transaction=%s amount=%s memo=%s', transaction_id, amount, memo)
-            return {'success': True}
-        deposit_id = int(dep['id'])
-        con.execute("UPDATE sepay_webhook_events SET status='queued',deposit_id=? WHERE transaction_id=?", (deposit_id, transaction_id))
-    log.info('[SEPAY] MATCHED transaction=%s deposit=%s amount=%s; auto-approve in %ss', transaction_id, deposit_id, amount, SEPAY_AUTO_APPROVE_DELAY)
-    asyncio.create_task(_sepay_auto_approve(transaction_id, deposit_id, amount))
-    return {'success': True}
+        con.execute('BEGIN')
+        claimed = con.execute('INSERT INTO sepay_webhook_events(transaction_id,deposit_id,received_at,payload) VALUES(?,?,?,?::jsonb) ON CONFLICT DO NOTHING RETURNING transaction_id', (txid, did, now(), json.dumps(payload, ensure_ascii=False))).fetchone()
+        if not claimed:
+            con.rollback()
+            return {'success': True, 'duplicate': True}
+        dep = con.execute('SELECT * FROM deposits WHERE id=? AND user_id=? FOR UPDATE', (did, uid)).fetchone()
+        if not dep or int(dep['amount']) != amount or str(dep['note'] or '').upper() != match.group(0):
+            con.commit()
+            return {'success': True, 'matched': False}
+        if dep['status'] not in ('pending', 'submitted'):
+            con.commit()
+            return {'success': True, 'already_processed': True}
+        con.execute('UPDATE users SET balance=balance+? WHERE user_id=?', (amount, uid))
+        balance = con.execute('SELECT balance,username,full_name FROM users WHERE user_id=?', (uid,)).fetchone()
+        con.execute("INSERT INTO balance_transactions(user_id,admin_id,action,amount,balance_after,note,created_at) VALUES(?,0,'deposit',?,?,?,?)", (uid, amount, balance['balance'], f'SePay tự duyệt #{did} · {txid}', now()))
+        con.execute("UPDATE deposits SET status='approved',sepay_transaction_id=? WHERE id=?", (txid, did))
+        approved = {'uid': uid, 'amount': amount, 'balance': balance['balance'], 'username': balance['username'], 'full_name': balance['full_name'], 'note': dep['note'], 'deposit_id': did}
+        con.commit()
+    if approved:
+        uname = '@' + approved['username'] if approved['username'] else 'Không có'
+        # Restore the existing deposit-success notification style used by the original bot.
+        notice = (f"NẠP TIỀN THÀNH CÔNG\nID: {approved['uid']}\nUsername: {uname}\n"
+                  f"Full name: {approved['full_name'] or 'Không có'}\n+{approved['amount']:,}đ\nND: {approved['note']}\n"
+                  f"Số dư: {approved['balance']:,}đ")
+        try:
+            await asyncio.to_thread(_telegram_http, 'sendMessage', {'chat_id': approved['uid'], 'text': notice})
+        except Exception:
+            log.exception('Could not notify user about SePay deposit %s', did)
+        for aid in ADMIN_IDS:
+            try:
+                await asyncio.to_thread(_telegram_http, 'sendMessage', {'chat_id': aid, 'text': f'✅ SEPAY TỰ DUYỆT #{did}\nID: {uid}\nSố tiền: {amount:,}đ\nGiao dịch: {txid}'})
+            except Exception:
+                log.exception('Could not notify admin about SePay deposit %s', did)
+    return {'success': True, 'approved': bool(approved), 'deposit_id': did}
+
+
+@web_app.post('/api/deposits/{deposit_id}/cancel')
+async def api_cancel_deposit(deposit_id: int, request: Request):
+    user = _mini_user(request)
+    with db() as con:
+        dep = con.execute('SELECT status FROM deposits WHERE id=? AND user_id=? FOR UPDATE', (deposit_id, user['id'])).fetchone()
+        if not dep:
+            raise HTTPException(status_code=404, detail='Không tìm thấy mã nạp.')
+        if dep['status'] != 'pending':
+            raise HTTPException(status_code=409, detail='Mã đã gửi xác nhận hoặc đã được xử lý, không thể hủy.')
+        con.execute("UPDATE deposits SET status='cancelled' WHERE id=?", (deposit_id,))
+    return {'success': True, 'message': 'Đã hủy mã nạp.'}
+
+
+@web_app.get('/api/deposits/active')
+async def api_active_deposit(request: Request):
+    user = _mini_user(request)
+    with db() as con:
+        dep = con.execute("SELECT id,amount,status,note,created_at FROM deposits WHERE user_id=? AND status IN ('pending','submitted') ORDER BY id DESC LIMIT 1", (user['id'],)).fetchone()
+    if not dep:
+        return {'active': False}
+    try:
+        created = dep['created_at']
+        dt = datetime.fromisoformat(created.replace('Z', '+00:00')) if isinstance(created, str) else created
+        if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+        remaining = max(0, 300 - int((datetime.now(timezone.utc) - dt).total_seconds()))
+    except Exception:
+        remaining = 0
+    if remaining <= 0:
+        with db() as con:
+            con.execute("UPDATE deposits SET status='expired' WHERE id=? AND status IN ('pending','submitted')", (dep['id'],))
+        return {'active': False}
+    return {'active': True, 'deposit_id': dep['id'], 'amount': dep['amount'], 'status': dep['status'],
+            'transfer_content': dep['note'], 'qr_url': make_qr_url(dep['amount'], dep['note']) + '&v=' + str(dep['id']), 'expires_in': remaining}
+
+
+@web_app.post('/api/vouchers/validate')
+async def api_validate_voucher(request: Request):
+    _mini_user(request)
+    payload = await request.json()
+    code = str(payload.get('code') or '').strip()
+    with db() as con:
+        row = con.execute('SELECT code,discount_percent,max_uses,used_count FROM discount_coupons WHERE code=? AND is_active=TRUE', (code,)).fetchone()
+    if not row or int(row['used_count']) >= int(row['max_uses']):
+        raise HTTPException(status_code=400, detail='Mã giảm giá không hợp lệ hoặc đã hết lượt sử dụng.')
+    return {'valid': True, 'code': row['code'], 'discount_percent': row['discount_percent'], 'remaining': int(row['max_uses'])-int(row['used_count'])}
 
 
 @web_app.post('/api/deposits')
@@ -2222,7 +2247,7 @@ async def api_create_deposit(request: Request):
     with db() as con:
         con.execute('SELECT user_id FROM users WHERE user_id=? FOR UPDATE',(user['id'],)).fetchone()
         con.execute('''UPDATE deposits SET status='expired'
-            WHERE user_id=? AND status='pending'
+            WHERE user_id=? AND status IN ('pending','submitted')
               AND created_at::timestamptz < NOW() - INTERVAL '5 minutes' ''',(user['id'],))
         recent=con.execute("SELECT id,status,amount,note,created_at FROM deposits WHERE user_id=? AND status IN ('pending','submitted') ORDER BY id DESC LIMIT 1",(user['id'],)).fetchone()
         if recent and int(recent['amount']) == amount:
@@ -2582,6 +2607,25 @@ async def api_admin_action(request: Request):
                 return {'success':True,'message':'Đã lưu ảnh danh mục. Ảnh sẽ hiển thị cho tất cả người dùng.'}
             if action=='stats':
                 return {'stats':con.execute("SELECT (SELECT COUNT(*) FROM users) AS users,(SELECT COALESCE(SUM(amount),0) FROM deposits WHERE status='approved') AS deposits,(SELECT COALESCE(SUM(balance),0) FROM users) AS balances,(SELECT COUNT(*) FROM purchases) AS purchases").fetchone()}
+            if action=='create_coupon':
+                percent=int(data.get('discount_percent') or 0); uses=int(data.get('max_uses') or 0)
+                if percent < 1 or percent > 90 or uses < 1 or uses > 1000000:
+                    raise HTTPException(status_code=400,detail='Phần trăm giảm phải từ 1–90 và lượt dùng phải lớn hơn 0.')
+                code=None
+                for _ in range(30):
+                    candidate=f"{secrets.randbelow(100000):05d}"
+                    if not con.execute('SELECT 1 FROM discount_coupons WHERE code=?',(candidate,)).fetchone():
+                        code=candidate; break
+                if code is None: raise HTTPException(status_code=503,detail='Không tạo được mã duy nhất, vui lòng thử lại.')
+                con.execute('INSERT INTO discount_coupons(code,discount_percent,max_uses,created_by,created_at) VALUES(?,?,?,?,?)',(code,percent,uses,admin['id'],now()))
+                return {'success':True,'code':code,'message':f'Đã tạo mã {code} giảm {percent}% · {uses} lượt.'}
+            if action=='seller_stats':
+                uid=int(data.get('user_id') or 0)
+                seller=con.execute('SELECT user_id,username,full_name,is_seller FROM users WHERE user_id=?',(uid,)).fetchone()
+                if not seller: raise HTTPException(status_code=404,detail='Không tìm thấy người dùng.')
+                deposits=con.execute("SELECT COUNT(*) AS n,COALESCE(SUM(amount),0) AS total FROM deposits WHERE user_id=? AND status='approved'",(uid,)).fetchone()
+                buys=con.execute('SELECT COUNT(*) AS n,COALESCE(SUM(quantity),0) AS keys,COALESCE(SUM(total_price),0) AS total FROM purchases WHERE user_id=?',(uid,)).fetchone()
+                return {'seller':seller,'deposits':deposits,'purchases':buys}
             if action=='usercheck':
                 target=str(data.get('query','')).strip().lstrip('@')
                 row=con.execute('SELECT user_id,username,full_name,balance,is_locked,is_seller,joined_at,last_seen FROM users WHERE user_id::text=? OR LOWER(username)=LOWER(?) ORDER BY last_seen DESC LIMIT 1',(target,target)).fetchone()

@@ -242,7 +242,7 @@
         </div>
     </div>
 
-    <div id="tab-buy" class="tab-content active">
+    <div id="tab-buy" class="tab-content">
         <div class="banner-card">
             <div class="banner-icon" aria-hidden="true">
                 <svg class="key-icon" viewBox="0 0 32 32" aria-hidden="true">
@@ -379,7 +379,7 @@
     <div id="tab-deposit" class="tab-content">
         <div class="deposit-card">
             <div class="deposit-title">NẠP TIỀN QUA MÃ QR</div>
-            <p class="deposit-desc">Số dư được cập nhật sau khi Admin xác nhận tiền đã vào tài khoản.</p>
+            <p class="deposit-desc">Số dư tự cập nhật khi SePay xác nhận giao dịch khớp mã và số tiền.</p>
             
             <div class="amount-input-box">
                 <input type="number" id="deposit-amount" placeholder="Nhập số tiền (Tối thiểu 2.000đ)">
@@ -405,6 +405,7 @@
             <button onclick="confirmPaidAction()" style="width: 100%; background: linear-gradient(135deg, #00a2ff 0%, #0066cc 100%); color: white; border: none; padding: 14px; border-radius: 14px; font-size: 13px; font-weight: 800; cursor: pointer; box-shadow: 0 4px 12px rgba(0,162,255,0.3);">
                 ĐÃ CHUYỂN TIỀN
             </button>
+            <button id="cancel-deposit-btn" onclick="cancelDepositCode()" style="width:100%;margin-top:8px;background:#552020;color:#fff;border:1px solid #8d3333;padding:12px;border-radius:12px;font-size:12px;font-weight:800;cursor:pointer;">✖ HỦY MÃ NẠP</button>
             
             <div style="margin-top: 10px; font-size: 11px; color: var(--text-sub);">
                 Đang chờ thanh toán... Hết hạn sau: <span id="countdown-timer" style="color: #ff3344; font-weight: 700;">05:00</span>
@@ -425,6 +426,8 @@
             <div class="admin-grid">
                 <button class="admin-action-btn" onclick="adminAction('broadcast')">📢 Gửi Thông Báo</button>
                 <button class="admin-action-btn" onclick="adminAction('stats')">📊 Thống Kê Hệ Thống</button>
+                <button class="admin-action-btn" onclick="createDiscountCoupon()">🎟️ Tạo Mã Giảm Giá</button>
+                <button class="admin-action-btn" onclick="viewSellerStats()">👑 Xem Thống Kê Sell</button>
                 <button class="admin-action-btn" onclick="adminAction('usercheck')">👤 Quản Lý Người Dùng</button>
                 <button class="admin-action-btn" onclick="adminAction('add_category')">📁 Thêm Danh Mục</button>
                 <button class="admin-action-btn" onclick="adminAction('add_product')">➕ Thêm Sản Phẩm</button>
@@ -473,7 +476,7 @@
     </div>
 
     <div class="bottom-nav">
-        <button class="nav-item active" id="nav-buy" onclick="switchTab('buy')">
+        <button class="nav-item" id="nav-buy" onclick="switchTab('buy')">
             <svg class="key-icon" viewBox="0 0 32 32" aria-hidden="true">
                 <path fill-rule="evenodd" d="M22 0.7a8.3 8.3 0 1 0 0 16.6 8.3 8.3 0 0 0 0-16.6Zm0 4.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z"/>
                 <path d="M15.6 11.6 3.6 23.6 7.9 27.9 10.4 30.4 12.9 27.9 10.4 25.4 12.9 22.9 15.4 25.4 17.9 22.9 15.4 20.4 19.9 15.9z"/>
@@ -741,7 +744,7 @@
                     code.textContent = dep.note || ('Đơn #' + dep.id);
                     const time = document.createElement('div');
                     time.className = 'history-time';
-                    time.textContent = dep.status + ' · ' + formatVietnamTime(dep.created_at);
+                    time.textContent = ({approved:'Đã cộng tiền',pending:'Chờ thanh toán',submitted:'Đã báo chuyển khoản',cancelled:'Đã hủy',expired:'Hết hạn',rejected:'Từ chối'}[dep.status] || dep.status) + ' · ' + formatVietnamTime(dep.created_at);
                     info.append(amount, code);
                     item.append(info, time);
                     history.appendChild(item);
@@ -1174,10 +1177,40 @@ function renderCategoryIconPreview(catName) {
             tg.HapticFeedback?.selectionChanged();
         }
 
-        function applyVoucher() {
-            let code = document.getElementById('voucher-code').value;
+        let activeVoucherCode = '';
+        let activeVoucherPercent = 0;
+        async function applyVoucher() {
+            const code = document.getElementById('voucher-code').value.trim();
             if (!code) { tg.showAlert('Nhập mã voucher!'); return; }
-            tg.showAlert('Mã voucher không hợp lệ hoặc đã hết hạn.');
+            try {
+                const result = await apiRequest('/api/vouchers/validate', {method:'POST',body:JSON.stringify({code})});
+                activeVoucherCode = result.code; activeVoucherPercent = Number(result.discount_percent || 0);
+                const total = Math.floor(selectedPkgPrice * currentQty * (100-activeVoucherPercent) / 100);
+                document.getElementById('buy-action-btn').innerText = `MUA NGAY (${total.toLocaleString('vi-VN')}đ)`;
+                tg.showAlert(`Áp dụng mã ${result.code}: giảm ${activeVoucherPercent}%. Còn ${result.remaining} lượt.`);
+            } catch (e) { activeVoucherCode=''; activeVoucherPercent=0; tg.showAlert(e.message || 'Mã không hợp lệ.'); }
+        }
+
+        async function createDiscountCoupon() {
+            const percent = Number(adminAsk('Nhập phần trăm giảm (1–90):'));
+            if (!percent) return;
+            const max_uses = Number(adminAsk('Nhập tổng số lượt sử dụng:'));
+            if (!max_uses) return;
+            try { const r=await adminApi('create_coupon',{discount_percent:percent,max_uses}); tg.showAlert(`MÃ GIẢM GIÁ: ${r.code}\nGiảm: ${percent}%\nLượt dùng: ${max_uses}`); }
+            catch(e) { tg.showAlert(e.message || 'Không tạo được mã.'); }
+        }
+
+        async function viewSellerStats() {
+            const user_id = Number(adminAsk('Nhập Telegram ID của tài khoản Sell:'));
+            if (!user_id) return;
+            try {
+                const r=await adminApi('seller_stats',{user_id});
+                const s=r.seller, d=r.deposits, b=r.purchases;
+                tg.showAlert(`THỐNG KÊ TÀI KHOẢN SELL\nID: ${s.user_id}\nUsername: @${s.username || 'Không có'}\nTrạng thái: ${s.is_seller?'Đang cấp Sell':'Chưa cấp Sell'}\n\nNẠP TIỀN\nSố lượt: ${d.n}\nTổng nạp: ${adminMoney(d.total)}\n\nMUA KEY\nĐơn mua: ${b.n}\nTổng key: ${b.keys}\nTổng chi: ${adminMoney(b.total)}`);
+                if (confirm('Mở lịch sử nạp của tài khoản này?')) { const h=await adminApi('user_history',{user_id,kind:'deposits'}); tg.showAlert((h.items||[]).map(v=>`#${v.id} · ${adminMoney(v.amount)} · ${v.status} · ${formatVietnamTime(v.created_at)}`).join('\n') || 'Chưa có lịch sử nạp.'); }
+                if (confirm('Mở lịch sử mua của tài khoản này?')) { const h=await adminApi('user_history',{user_id,kind:'purchases'}); tg.showAlert((h.items||[]).map(v=>`#${v.id} · ${v.product_name} · ${v.quantity} key · ${adminMoney(v.total_price)}`).join('\n') || 'Chưa có lịch sử mua.'); }
+                if (s.is_seller && confirm('Bỏ quyền Sell của tài khoản này?')) { await adminApi('remove_sell',{user_id}); tg.showAlert('Đã bỏ quyền Sell.'); }
+            } catch(e) { tg.showAlert(e.message || 'Không tải được thống kê Sell.'); }
         }
 
         function showPurchaseSuccess(result) {
@@ -1241,7 +1274,8 @@ function renderCategoryIconPreview(catName) {
                         method: 'POST',
                         body: JSON.stringify({
                             option_id: Number(selectedOptionId),
-                            quantity: Number(currentQty)
+                            quantity: Number(currentQty),
+                            voucher_code: activeVoucherCode
                         })
                     });
                     if (!result?.success) throw new Error(result?.message || 'Không thể hoàn tất đơn hàng.');
@@ -1252,7 +1286,7 @@ function renderCategoryIconPreview(catName) {
                         product_name: selectedPkgName,
                         duration_label: selectedOptionObj?.duration_label || '',
                         quantity: currentQty,
-                        total: total,
+                        total: Number(result.total || total),
                         keys_text: keysText
                     });
 
@@ -1319,6 +1353,42 @@ function renderCategoryIconPreview(catName) {
             }
         }
 
+        async function restoreActiveDeposit() {
+            try {
+                const data = await apiRequest('/api/deposits/active');
+                if (!data?.active) return;
+                activeDeposit = data;
+                document.getElementById('viet-qr-img').src = data.qr_url;
+                document.getElementById('qr-display-amount').innerText = Number(data.amount).toLocaleString('vi-VN') + 'đ';
+                document.getElementById('qr-result-container').style.display = 'block';
+                let memoNode = document.getElementById('deposit-transfer-content');
+                if (!memoNode) {
+                    memoNode = document.createElement('div'); memoNode.id = 'deposit-transfer-content';
+                    memoNode.style.cssText = 'font-size:13px;font-weight:800;color:#ffcc00;margin:8px 0;';
+                    document.getElementById('qr-result-container').insertBefore(memoNode, document.getElementById('qr-result-container').querySelector('button'));
+                }
+                memoNode.textContent = 'Nội dung chuyển khoản: ' + data.transfer_content;
+                const paid = document.querySelector('#qr-result-container button');
+                if (data.status === 'submitted') { paid.disabled = true; paid.textContent = 'ĐÃ GỬI XÁC NHẬN'; }
+                startCountdown(Number(data.expires_in || 0));
+            } catch (e) { console.warn('Không khôi phục được mã nạp đang chờ:', e); }
+        }
+
+        async function cancelDepositCode() {
+            if (!activeDeposit?.deposit_id) { tg.showAlert('Không có mã nạp đang hoạt động.'); return; }
+            if (activeDeposit.status !== 'pending') { tg.showAlert('Mã đã gửi xác nhận hoặc đã xử lý nên không thể hủy.'); return; }
+            if (!confirm('Bạn chắc chắn muốn hủy mã nạp này?')) return;
+            try {
+                await apiRequest('/api/deposits/' + activeDeposit.deposit_id + '/cancel', {method:'POST', body:JSON.stringify({})});
+                if (countdownInterval) clearInterval(countdownInterval);
+                activeDeposit = null;
+                document.getElementById('qr-result-container').style.display = 'none';
+                document.getElementById('deposit-amount').value = '';
+                tg.showAlert('Đã hủy mã. Bạn có thể nhập số tiền mới.');
+                await refreshAccountData();
+            } catch (e) { tg.showAlert(e.message || 'Không thể hủy mã nạp.'); }
+        }
+
         function startCountdown(duration) {
             if (countdownInterval) clearInterval(countdownInterval);
             let timer = duration;
@@ -1332,6 +1402,11 @@ function renderCategoryIconPreview(catName) {
                     clearInterval(countdownInterval);
                     display.textContent = '00:00 (Hết hạn)';
                     if (paidButton) paidButton.disabled = true;
+                    if (activeDeposit) {
+                        activeDeposit = null;
+                        document.getElementById('qr-result-container').style.display = 'none';
+                        tg.showAlert('Mã nạp đã hết hạn sau 5 phút. Bạn có thể tạo mã mới.');
+                    }
                     return;
                 }
                 timer -= 1;
@@ -1517,6 +1592,7 @@ function renderCategoryIconPreview(catName) {
 
         startSmoothLoadingBar();
         refreshAccountData();
+        restoreActiveDeposit();
         loadCatalog();
         if (balanceRefreshInterval) clearInterval(balanceRefreshInterval);
         balanceRefreshInterval = setInterval(refreshAccountData, 15000);
