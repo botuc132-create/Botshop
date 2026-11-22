@@ -21,6 +21,8 @@ Thiết lập trong Railway Variables hoặc file `.env` riêng trên VPS:
 - `QR_BANK`, `QR_ACCOUNT`, `QR_HOLDER`, `QR_TEMPLATE`, `QR_SHOWINFO`, `QR_MEMO_SUFFIX`: cấu hình QR (tùy chọn).
 - `SHOPHENRY_API_TOKEN`, `SHOPHENRY_API_URL`: chỉ cần nếu có sản phẩm Aim Hack dùng ShopHenry.
 - `LOG_LEVEL=INFO` (tùy chọn).
+- `SEPAY_WEBHOOK_API_KEY`: khóa xác thực API Key đã tạo trong cấu hình Webhook SePay (khuyến nghị). Hoặc dùng `SEPAY_WEBHOOK_SECRET` nếu chọn HMAC-SHA256. Không cấu hình cả hai trừ khi bạn chủ động cần hỗ trợ cả hai.
+- `SEPAY_AUTO_APPROVE_DELAY=6`: thời gian chờ trước khi tự duyệt (giây).
 
 Không đưa `.env`, bot token hoặc database password lên GitHub.
 
@@ -40,7 +42,11 @@ Vào **Cá nhân → Quản trị Admin**. Danh sách chức năng được xác
 
 Mini App và Telegram bot cùng sử dụng `DATABASE_URL`. Khi cập nhật code, không đổi sang database mới hoặc xóa volume/database cũ nếu muốn giữ số dư, người dùng, lịch sử và kho key.
 
-Tạo QR chỉ tạo đơn nạp `pending`. Khi người dùng bấm **ĐÃ CHUYỂN TIỀN**, bot gửi yêu cầu cho admin; tiền chỉ được cộng sau khi admin kiểm tra sao kê và duyệt. Source chưa có webhook đối soát ngân hàng tự động.
+Tạo QR tạo đơn nạp `pending` với nội dung riêng dạng `SEVQR{user_id}NAP{deposit_id}`. Endpoint nhận giao dịch SePay là `https://<domain-Railway>/webhook/sepay`. Cấu hình Webhook SePay nhận tiền vào (`In_only`), xác thực bằng API Key hoặc HMAC-SHA256, và đặt đúng URL trên. Trong Railway Variables, đặt cùng khóa vào `SEPAY_WEBHOOK_API_KEY` (nếu dùng API Key) hoặc `SEPAY_WEBHOOK_SECRET` (nếu dùng HMAC-SHA256).
+
+Khi webhook báo giao dịch tiền vào, bot chỉ khớp nội dung chuyển khoản và số tiền chính xác với một đơn đang `pending`/`submitted`. Sau 6 giây, bot cộng tiền và đổi trạng thái `approved` trong cùng giao dịch database. Bảng `sepay_webhook_events` dùng ID giao dịch SePay làm khóa chính để webhook retry/replay không cộng tiền hoặc ghi log lần hai. Admin vẫn nhận thông báo khi tự duyệt; nút duyệt thủ công vẫn được giữ làm phương án dự phòng.
+
+**Lưu ý:** Webhook chỉ hoạt động nếu SePay thực sự nhận được giao dịch ngân hàng và gửi event đến webhook. QR được tạo bởi giao diện không tự đảm bảo webhook sẽ phát sinh; cần thử một giao dịch thực tế hoặc dùng chế độ test của SePay trước khi bật cho người dùng. SePay yêu cầu endpoint phản hồi JSON `{"success": true}` với HTTP 200/201. Xem tài liệu: https://developer.sepay.vn/vi/sepay-webhooks/tich-hop-webhook.
 
 ## Kiểm tra sau deploy
 
@@ -48,18 +54,7 @@ Tạo QR chỉ tạo đơn nạp `pending`. Khi người dùng bấm **ĐÃ CHUY
 2. Gửi `/start`, mở Mini App từ nút Web App của bot.
 3. Kiểm tra số dư, danh mục, lịch sử.
 4. Đăng nhập bằng một Telegram ID có trong `ADMIN_IDS`, mở tab Cá nhân và thử thống kê.
-5. Thử nạp tiền bằng số nhỏ; chỉ admin duyệt sau khi xác nhận tiền thực nhận.
+5. Cấu hình SePay Webhook URL `https://<domain-Railway>/webhook/sepay`, chọn tiền vào và API Key/HMAC đúng với biến môi trường.
+6. Gửi thử webhook trong SePay hoặc giao dịch nhỏ; kiểm tra log `[SEPAY] MATCHED` rồi `[SEPAY] AUTO_APPROVED`. Chỉ bật cho người dùng sau khi xác nhận giao dịch thật khớp chính xác.
 
 Chỉ chạy **một bản polling** cho mỗi bot token. Nếu dùng VPS, mở cổng `PORT` và cấu hình reverse proxy/domain HTTPS để Telegram Mini App truy cập được.
-
-
-## Tự động đối chiếu SePay
-
-- Thêm bot cửa hàng vào nhóm thông báo SePay có ID `-1004405246932`. Bot phải nhận được tin nhắn mới trong nhóm (cấp quyền phù hợp hoặc tắt Group Privacy cho bot qua BotFather).
-- Có thể đặt `SEPAY_GROUP_ID=-1004405246932` trong Railway Variables nếu dùng nhóm khác.
-- Nên đặt `SEPAY_SENDER_ID` thành ID số của bot gửi thông báo SePay để chỉ nhận đúng nguồn tin. Khi đặt biến này, mọi bot gửi tin từ ID khác đều bị bỏ qua.
-- Hệ thống chỉ trích xuất token liên tục bắt đầu bằng `SEVQR` (ví dụ `SEVQR7776471599NAP296`), so khớp chính xác với mã của đơn và đồng thời kiểm tra số tiền vào khớp số tiền nạp. Không khớp thì không tự cộng tiền.
-- Khi người dùng bấm “Đã chuyển tiền”, bot gửi yêu cầu cho Admin. Nếu có giao dịch SePay hợp lệ tương ứng, hệ thống đợi 5 giây rồi duyệt theo giao dịch đã ghi nhận; một mã giao dịch không thể cộng tiền hai lần.
-- Mini App tải lại sẽ khôi phục mã QR đang còn trong hạn 5 phút; hết hạn thì mã QR được ẩn.
-
-**Lưu ý:** Telegram chỉ chuyển cho bot các tin nhắn mới mà bot được phép đọc; bot không thể tự đọc lịch sử cũ trong nhóm. Cần triển khai và kiểm tra một giao dịch thử số tiền nhỏ trước khi bật dùng thật.
