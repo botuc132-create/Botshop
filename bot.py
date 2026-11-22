@@ -1629,27 +1629,46 @@ async def auto_approve_deposit_after_delay(deposit_id, delay=5):
 
 async def sepay_transaction_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
-    if not msg or msg.chat_id != SEPAY_GROUP_ID or not msg.text:
+    if not msg or msg.chat_id != SEPAY_GROUP_ID:
         return
+
+    # SePay notifications may arrive as plain text, photo captions, or channel-style
+    # posts. In the latter case Telegram can populate sender_chat instead of from_user.
+    message_text = (msg.text or msg.caption or '').strip()
+    if not message_text:
+        log.info('SePay group update has no text/caption (chat=%s message=%s)', msg.chat_id, msg.message_id)
+        return
+
     sender = msg.from_user
-    if not sender or not sender.is_bot:
+    sender_chat = getattr(msg, 'sender_chat', None)
+    sender_id = sender.id if sender else (sender_chat.id if sender_chat else None)
+
+    # Do not require from_user.is_bot: channel posts and integrations can use sender_chat.
+    # If an explicit sender ID is configured, enforce it against either Telegram sender type.
+    if SEPAY_SENDER_ID is not None and sender_id != SEPAY_SENDER_ID:
+        log.info('Ignored SePay message due to sender mismatch (chat=%s sender=%s expected=%s message=%s)',
+                 msg.chat_id, sender_id, SEPAY_SENDER_ID, msg.message_id)
         return
-    if SEPAY_SENDER_ID is not None and sender.id != SEPAY_SENDER_ID:
-        return
-    memo = extract_sepay_memo(msg.text)
+
+    memo = extract_sepay_memo(message_text)
     suffix = extract_sepay_order_suffix(memo)
-    amount = extract_sepay_incoming_amount(msg.text)
+    amount = extract_sepay_incoming_amount(message_text)
     if not memo or not suffix or amount is None or amount <= 0:
-        log.info('Ignored SePay message without a valid memo suffix/amount (chat=%s message=%s)', msg.chat_id, msg.message_id)
+        log.info('Ignored SePay message without a valid memo suffix/amount (chat=%s sender=%s message=%s text=%r)',
+                 msg.chat_id, sender_id, msg.message_id, message_text[:500])
         return
+
+    log.info('Received SePay transaction (chat=%s sender=%s message=%s memo=%s suffix=%s amount=%s)',
+             msg.chat_id, sender_id, msg.message_id, memo, suffix, amount)
     with db() as con:
         con.execute("""INSERT INTO sepay_transactions(memo,amount,chat_id,message_id,sender_id,received_at)
             VALUES(?,?,?,?,?,?) ON CONFLICT(memo) DO NOTHING""",
-            (memo, amount, msg.chat_id, msg.message_id, sender.id, now()))
+            (memo, amount, msg.chat_id, msg.message_id, sender_id, now()))
         matches = con.execute("""SELECT id FROM deposits
             WHERE status='submitted' AND amount=? AND RIGHT(note,3)=?
               AND created_at::timestamptz >= NOW() - INTERVAL '5 minutes'
             ORDER BY id""", (amount, suffix)).fetchall()
+    log.info('SePay transaction matched %s submitted deposit(s) by amount and suffix', len(matches))
     for row in matches:
         asyncio.create_task(auto_approve_deposit_after_delay(int(row['id']), 5))
 
@@ -2816,13 +2835,13 @@ def main():
     telegram_application = app
     app.add_handler(CommandHandler('start', start)); app.add_handler(CommandHandler('admin', admin_cmd))
     app.add_handler(CallbackQueryHandler(callback))
-    app.add_handler(MessageHandler(filters.Chat(chat_id=SEPAY_GROUP_ID) & filters.TEXT, sepay_transaction_handler), group=-1)
+    app.add_handler(MessageHandler(filters.Chat(chat_id=SEPAY_GROUP_ID) & (filters.TEXT | filters.CAPTION), sepay_transaction_handler), group=-1)
     app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, text_handler))
     app.add_error_handler(error_handler)
     port = int(os.getenv('PORT', '3000'))
     web_thread = threading.Thread(target=lambda: uvicorn.run(web_app, host='0.0.0.0', port=port, log_level='info'), daemon=True)
     web_thread.start()
-    log.info('Shop bot + Mini App API started on port %s', port)
+    log.info('Shop bot + Mini App API started on port %s (SEPAY_GROUP_ID=%s, SEPAY_SENDER_ID=%s)', port, SEPAY_GROUP_ID, SEPAY_SENDER_ID)
     # Keep the bot polling when Telegram is temporarily unavailable during startup.
     app.run_polling(allowed_updates=Update.ALL_TYPES, bootstrap_retries=-1)
 
