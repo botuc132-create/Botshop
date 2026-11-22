@@ -1968,35 +1968,51 @@ def api_me(request: Request):
 
 
 def _build_shopyuri_catalog_for_user(user_id):
+    """Build the customer catalog from the shared local database.
+
+    Supplier-mapped options and legacy/local-stock options deliberately share
+    the same response shape. Older products have a NULL shopyuri_product_id;
+    filtering them out here made the admin toggle appear successful while the
+    Mini App catalog remained empty for those products.
+    """
     with db() as con:
         cats = con.execute('''SELECT DISTINCT c.id,c.name,c.guide_url,c.icon
-            FROM categories c JOIN products p ON p.category_id=c.id
-            JOIN product_options po ON po.product_id=p.id
-            WHERE po.shopyuri_product_id IS NOT NULL AND p.is_active=TRUE ORDER BY c.id''').fetchall()
+            FROM categories c
+            JOIN products p ON p.category_id::text=c.id::text
+            JOIN product_options po ON po.product_id::text=p.id::text
+            WHERE p.is_active=TRUE
+            ORDER BY c.id''').fetchall()
         output=[]
         seller = con.execute('SELECT is_seller FROM users WHERE user_id=?', (user_id,)).fetchone()
+        is_seller = bool(seller and seller['is_seller'])
         for cat in cats:
             products = con.execute('''SELECT DISTINCT p.id,p.name FROM products p
-                JOIN product_options po ON po.product_id=p.id
-                WHERE p.category_id=? AND po.shopyuri_product_id IS NOT NULL AND p.is_active=TRUE ORDER BY p.id''', (cat['id'],)).fetchall()
+                JOIN product_options po ON po.product_id::text=p.id::text
+                WHERE p.category_id::text=?::text AND p.is_active=TRUE ORDER BY p.id''', (cat['id'],)).fetchall()
             prod_out=[]
             for product in products:
                 opts=con.execute('''SELECT po.id,po.duration,po.duration_label,po.price,po.sell_price,
-                    po.shopyuri_product_id,po.shopyuri_stock
+                    po.shopyuri_product_id,po.shopyuri_stock,
+                    (SELECT COUNT(*) FROM product_keys pk
+                     WHERE pk.option_id=po.id AND pk.status='available') AS local_stock
                     FROM product_options po
-                    WHERE po.product_id=? AND po.shopyuri_product_id IS NOT NULL
-                    ORDER BY po.id''',(product['id'],)).fetchall()
+                    WHERE po.product_id::text=?::text
+                    ORDER BY po.id''',(str(product['id']),)).fetchall()
                 prod_out.append({'id':product['id'],'name':product['name'],'options':[{
                     'id':o['id'],'duration':o['duration'],'duration_label':o['duration_label'],
-                    'price':int(o['sell_price'] if seller and seller['is_seller'] and o['sell_price'] else o['price']),
-                    'stock':int(o['shopyuri_stock']) if o['shopyuri_stock'] is not None else 0,
-                    'stock_source':'supplier','regular_price':int(o['price'] or 0),
-                    'sell_price':int(o['sell_price'] or 0),'shopyuri':True,
-                    'shopyuri_product_id':str(o['shopyuri_product_id'])} for o in opts]})
-            output.append({'id':cat['id'],'name':cat['name'],'guide_url':cat['guide_url'],
-                           'icon':cat['icon'] or '', 'products':prod_out})
+                    'price':int(o['sell_price'] if (is_seller and o['sell_price'] and o['sell_price'] > 0) else o['price']),
+                    'stock':(int(o['shopyuri_stock']) if o['shopyuri_stock'] is not None else 0)
+                            if o['shopyuri_product_id'] else int(o['local_stock']),
+                    'stock_source':'supplier' if o['shopyuri_product_id'] else 'local',
+                    'regular_price':int(o['price'] or 0),
+                    'sell_price':int(o['sell_price'] or 0),
+                    'shopyuri':bool(o['shopyuri_product_id']),
+                    'shopyuri_product_id':str(o['shopyuri_product_id']) if o['shopyuri_product_id'] else None
+                } for o in opts]})
+            if prod_out:
+                output.append({'id':cat['id'],'name':cat['name'],'guide_url':cat['guide_url'],
+                               'icon':cat['icon'] or '', 'products':prod_out})
     return output
-
 
 async def _refresh_shopyuri_catalog_background():
     try:
@@ -2050,7 +2066,7 @@ async def api_purchase(request: Request):
         con.execute('BEGIN')
         u=con.execute('SELECT balance,is_locked,is_seller FROM users WHERE user_id=? FOR UPDATE',(user['id'],)).fetchone()
         opt=con.execute('''SELECT po.*,p.name AS product_name,p.category_id,c.name AS category_name FROM product_options po
-            JOIN products p ON p.id=po.product_id JOIN categories c ON c.id=p.category_id WHERE po.id=? AND p.is_active=TRUE''',(oid,)).fetchone()
+            JOIN products p ON p.id::text=po.product_id::text JOIN categories c ON c.id::text=p.category_id::text WHERE po.id=? AND p.is_active=TRUE''',(oid,)).fetchone()
         if not u or u['is_locked']: raise HTTPException(status_code=403,detail='Tài khoản không thể mua hàng.')
         if not opt: raise HTTPException(status_code=404,detail='Gói sản phẩm không tồn tại.')
         price=opt['sell_price'] if u['is_seller'] and opt['sell_price']>0 else opt['price']; subtotal=int(price)*qty
