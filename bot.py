@@ -1534,38 +1534,53 @@ async def show_admin_user(msg, uid):
     )
 
 def extract_sepay_memo(message_text):
-    # Extract the contiguous transfer-content token beginning with SEVQR.
+    # Keep the full SEVQR token so each bank event remains uniquely identifiable.
     match = re.search(r'(?i)(SEVQR[A-Z0-9_-]+)', str(message_text or ''))
     return match.group(1).upper() if match else None
 
 
+def extract_sepay_order_suffix(memo):
+    # The SePay memo ends with NAP + the 3-digit order suffix shown to admins.
+    match = re.search(r'(?i)NAP\d*(\d{3})$', str(memo or '').strip())
+    return match.group(1) if match else None
+
+
 def extract_sepay_incoming_amount(message_text):
-    match = re.search(r'(?i)Tiền\s*vào\s*:\s*([0-9][0-9,\.\s]*)\s*đ', str(message_text or ''))
-    if not match:
-        return None
-    digits = re.sub(r'\D', '', match.group(1))
-    try:
-        return int(digits) if digits else None
-    except ValueError:
-        return None
+    text = str(message_text or '')
+    patterns = (
+        r'(?i)Tiền\s*vào\s*[:：]?\s*([0-9][0-9,.\s]*)\s*(?:đ|vnd)?',
+        r'(?i)Amount\s*(?:in|received)?\s*[:：]?\s*([0-9][0-9,.\s]*)\s*(?:đ|vnd)?',
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            digits = re.sub(r'\D', '', match.group(1))
+            if digits:
+                return int(digits)
+    return None
 
 
 async def auto_approve_deposit_after_delay(deposit_id, delay=5):
-    # Credit once only after exact memo and amount match.
+    # Match by the 3 digits after NAP, but require amount, submitted state,
+    # 5-minute validity, and a unique candidate. All rows are locked before credit.
     await asyncio.sleep(delay)
     approved = None
     with db() as con:
-        dep = con.execute('''SELECT d.*,u.username,u.full_name
-            FROM deposits d JOIN users u ON u.user_id=d.user_id
-            WHERE d.id=? FOR UPDATE OF d''', (deposit_id,)).fetchone()
+        dep = con.execute('SELECT d.*,u.username,u.full_name FROM deposits d JOIN users u ON u.user_id=d.user_id WHERE d.id=? FOR UPDATE OF d', (deposit_id,)).fetchone()
         if not dep or dep['status'] != 'submitted' or not dep['note']:
             return
-        event = con.execute('''SELECT * FROM sepay_transactions
-            WHERE memo=? AND amount=? AND matched_deposit_id IS NULL
-            FOR UPDATE''', (str(dep['note']).upper(), int(dep['amount']))).fetchone()
-        if not event:
+        suffix = extract_sepay_order_suffix(dep['note'])
+        if not suffix:
+            log.info('Deposit #%s has no NAP three-digit suffix', deposit_id)
             return
-        # A QR request is valid for five minutes; reject notifications received outside that window.
+        possible_deposits = con.execute("SELECT id FROM deposits WHERE status='submitted' AND amount=? AND RIGHT(note,3)=? AND created_at::timestamptz >= NOW() - INTERVAL '5 minutes' ORDER BY id", (int(dep['amount']), suffix)).fetchall()
+        if len(possible_deposits) != 1 or int(possible_deposits[0]['id']) != int(deposit_id):
+            return
+        events = con.execute("SELECT * FROM sepay_transactions WHERE amount=? AND matched_deposit_id IS NULL AND received_at::timestamptz >= ?::timestamptz AND received_at::timestamptz <= (?::timestamptz + INTERVAL '5 minutes') ORDER BY received_at FOR UPDATE", (int(dep['amount']), dep['created_at'], dep['created_at'])).fetchall()
+        matching_events = [e for e in events if extract_sepay_order_suffix(e['memo']) == suffix]
+        if len(matching_events) != 1:
+            return
+        event = matching_events[0]
         try:
             created = dep['created_at']
             created_dt = datetime.fromisoformat(created.replace('Z', '+00:00')) if isinstance(created, str) else created
@@ -1577,11 +1592,15 @@ async def auto_approve_deposit_after_delay(deposit_id, delay=5):
         except Exception:
             log.exception('Could not validate SePay/deposit timestamps for #%s', deposit_id)
             return
+        fresh_dep = con.execute("SELECT status FROM deposits WHERE id=?", (deposit_id,)).fetchone()
+        fresh_event = con.execute("SELECT matched_deposit_id FROM sepay_transactions WHERE memo=?", (event['memo'],)).fetchone()
+        if not fresh_dep or fresh_dep['status'] != 'submitted' or not fresh_event or fresh_event['matched_deposit_id'] is not None:
+            return
         con.execute('UPDATE users SET balance=balance+? WHERE user_id=?', (dep['amount'], dep['user_id']))
         bal = con.execute('SELECT balance FROM users WHERE user_id=?', (dep['user_id'],)).fetchone()['balance']
-        con.execute('''INSERT INTO balance_transactions(user_id,admin_id,action,amount,balance_after,note,created_at)
-            VALUES(?,?,'deposit',?,?,?,?)''', (dep['user_id'], 0, dep['amount'], bal, f"Tự động duyệt SePay #{deposit_id}", now()))
-        con.execute("UPDATE deposits SET status='approved',auto_approved=TRUE,sepay_memo=?,sepay_matched_at=? WHERE id=?", (event['memo'], now(), deposit_id))
+        con.execute("""INSERT INTO balance_transactions(user_id,admin_id,action,amount,balance_after,note,created_at)
+            VALUES(?,?,'deposit',?,?,?,?)""", (dep['user_id'], 0, dep['amount'], bal, f"Tự động duyệt SePay #{deposit_id}", now()))
+        con.execute("UPDATE deposits SET status='approved',auto_approved=TRUE,sepay_memo=?,sepay_matched_at=? WHERE id=? AND status='submitted'", (event['memo'], now(), deposit_id))
         con.execute('UPDATE sepay_transactions SET matched_deposit_id=? WHERE memo=? AND matched_deposit_id IS NULL', (deposit_id, event['memo']))
         approved = {'user_id': dep['user_id'], 'amount': dep['amount'], 'balance': bal,
                     'name': dep['full_name'], 'username': dep['username'], 'memo': event['memo'],
@@ -1613,21 +1632,24 @@ async def sepay_transaction_handler(update: Update, context: ContextTypes.DEFAUL
     if not msg or msg.chat_id != SEPAY_GROUP_ID or not msg.text:
         return
     sender = msg.from_user
-    # Ignore human-authored posts; optionally pin the exact SePay bot sender ID in Railway.
     if not sender or not sender.is_bot:
         return
     if SEPAY_SENDER_ID is not None and sender.id != SEPAY_SENDER_ID:
         return
     memo = extract_sepay_memo(msg.text)
+    suffix = extract_sepay_order_suffix(memo)
     amount = extract_sepay_incoming_amount(msg.text)
-    if not memo or amount is None or amount <= 0:
+    if not memo or not suffix or amount is None or amount <= 0:
+        log.info('Ignored SePay message without a valid memo suffix/amount (chat=%s message=%s)', msg.chat_id, msg.message_id)
         return
     with db() as con:
-        con.execute('''INSERT INTO sepay_transactions(memo,amount,chat_id,message_id,sender_id,received_at)
-            VALUES(?,?,?,?,?,?) ON CONFLICT(memo) DO NOTHING''',
+        con.execute("""INSERT INTO sepay_transactions(memo,amount,chat_id,message_id,sender_id,received_at)
+            VALUES(?,?,?,?,?,?) ON CONFLICT(memo) DO NOTHING""",
             (memo, amount, msg.chat_id, msg.message_id, sender.id, now()))
-        matches = con.execute("SELECT id FROM deposits WHERE note=? AND amount=? AND status='submitted' ORDER BY id DESC LIMIT 2", (memo, amount)).fetchall()
-    # Trigger the same delayed, locked/idempotent approval path whether SePay or user submits first.
+        matches = con.execute("""SELECT id FROM deposits
+            WHERE status='submitted' AND amount=? AND RIGHT(note,3)=?
+              AND created_at::timestamptz >= NOW() - INTERVAL '5 minutes'
+            ORDER BY id""", (amount, suffix)).fetchall()
     for row in matches:
         asyncio.create_task(auto_approve_deposit_after_delay(int(row['id']), 5))
 
@@ -2296,6 +2318,21 @@ async def api_submit_deposit(deposit_id: int, request: Request):
         except Exception: log.exception('Cannot notify admin for deposit %s',deposit_id)
     asyncio.create_task(auto_approve_deposit_after_delay(deposit_id, 5))
     return {'success':True,'message':'Đã gửi yêu cầu một lần. Bot đang đối chiếu giao dịch; nếu nội dung và số tiền khớp, hệ thống sẽ tự duyệt sau 5 giây.'}
+
+
+@web_app.post('/api/deposits/{deposit_id}/cancel')
+async def api_cancel_deposit(deposit_id: int, request: Request):
+    user = _mini_user(request)
+    with db() as con:
+        dep = con.execute("SELECT id,status FROM deposits WHERE id=? AND user_id=? FOR UPDATE", (deposit_id, user['id'])).fetchone()
+        if not dep:
+            raise HTTPException(status_code=404, detail='Không tìm thấy mã nạp tiền.')
+        if dep['status'] == 'cancelled':
+            return {'success': True, 'message': 'Mã nạp đã được hủy.'}
+        if dep['status'] != 'pending':
+            raise HTTPException(status_code=409, detail='Mã nạp đã gửi yêu cầu xác nhận hoặc đã được xử lý nên không thể hủy.')
+        con.execute("UPDATE deposits SET status='cancelled' WHERE id=? AND user_id=? AND status='pending'", (deposit_id, user['id']))
+    return {'success': True, 'message': 'Đã hủy mã nạp. Bạn có thể nhập lại số tiền và tạo mã QR mới.'}
 
 
 @web_app.get('/api/admin/overview')

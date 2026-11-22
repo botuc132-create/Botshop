@@ -402,8 +402,11 @@
                 <span><b>Lưu ý:</b> Vui lòng chuyển đúng số tiền và nội dung. Số dư chỉ được cộng sau khi Admin xác nhận giao dịch ngân hàng.</span>
             </div>
 
-            <button onclick="confirmPaidAction()" style="width: 100%; background: linear-gradient(135deg, #00a2ff 0%, #0066cc 100%); color: white; border: none; padding: 14px; border-radius: 14px; font-size: 13px; font-weight: 800; cursor: pointer; box-shadow: 0 4px 12px rgba(0,162,255,0.3);">
+            <button id="deposit-paid-button" onclick="confirmPaidAction()" style="width: 100%; background: linear-gradient(135deg, #00a2ff 0%, #0066cc 100%); color: white; border: none; padding: 14px; border-radius: 14px; font-size: 13px; font-weight: 800; cursor: pointer; box-shadow: 0 4px 12px rgba(0,162,255,0.3);">
                 ĐÃ CHUYỂN TIỀN
+            </button>
+            <button id="deposit-cancel-button" onclick="cancelDepositCode()" style="width: 100%; margin-top: 9px; background: #303744; color: #ffffff; border: 1px solid #596273; padding: 12px; border-radius: 12px; font-size: 12px; font-weight: 800; cursor: pointer;">
+                HỦY MÃ NẠP / NHẬP LẠI SỐ TIỀN
             </button>
             
             <div style="margin-top: 10px; font-size: 11px; color: var(--text-sub);">
@@ -1281,11 +1284,13 @@ function renderCategoryIconPreview(catName) {
             qrImage.src = data.qr_url;
             document.getElementById('qr-display-amount').innerText = Number(data.amount).toLocaleString('vi-VN') + 'đ';
             container.style.display = 'block';
-            const paidButton = container.querySelector('button');
+            const paidButton = document.getElementById('deposit-paid-button');
+            const cancelButton = document.getElementById('deposit-cancel-button');
             const statusLabel = container.querySelector('div:first-child');
             const submitted = data.status === 'submitted';
             statusLabel.textContent = submitted ? 'ĐANG CHỜ ĐỐI CHIẾU GIAO DỊCH' : 'ĐANG THANH TOÁN';
             paidButton.disabled = submitted || Number(data.expires_in || 0) <= 0;
+            if (cancelButton) { cancelButton.disabled = submitted || Number(data.expires_in || 0) <= 0; cancelButton.style.opacity = cancelButton.disabled ? '0.55' : '1'; }
             paidButton.textContent = submitted ? 'BOT ĐANG XÉT DUYỆT' : 'ĐÃ CHUYỂN TIỀN';
             let memoNode = document.getElementById('deposit-transfer-content');
             if (!memoNode) {
@@ -1341,7 +1346,8 @@ function renderCategoryIconPreview(catName) {
             if (countdownInterval) clearInterval(countdownInterval);
             let timer = duration;
             const display = document.getElementById('countdown-timer');
-            const paidButton = document.querySelector('#qr-result-container button');
+            const paidButton = document.getElementById('deposit-paid-button');
+            const cancelButton = document.getElementById('deposit-cancel-button');
             const tick = () => {
                 const minutes = String(Math.floor(timer / 60)).padStart(2, '0');
                 const seconds = String(timer % 60).padStart(2, '0');
@@ -1350,6 +1356,7 @@ function renderCategoryIconPreview(catName) {
                     clearInterval(countdownInterval);
                     display.textContent = '00:00 (Hết hạn)';
                     if (paidButton) paidButton.disabled = true;
+                    if (cancelButton) cancelButton.disabled = true;
                     if (activeDeposit && Number(activeDeposit.expires_in || 0) > 0) {
                         activeDeposit = null;
                         document.getElementById('qr-result-container').style.display = 'none';
@@ -1360,6 +1367,39 @@ function renderCategoryIconPreview(catName) {
             };
             tick();
             countdownInterval = setInterval(tick, 1000);
+        }
+
+        async function cancelDepositCode() {
+            if (depositSubmitBusy) return;
+            if (!activeDeposit || !activeDeposit.deposit_id) {
+                tg.showAlert('Không có mã nạp đang hoạt động.');
+                return;
+            }
+            if (activeDeposit.status === 'submitted') {
+                tg.showAlert('Mã nạp đã gửi yêu cầu xác nhận, không thể tự hủy để tránh bỏ sót giao dịch đã chuyển.');
+                return;
+            }
+            const ok = await new Promise(resolve => {
+                if (typeof tg.showConfirm === 'function') tg.showConfirm('Bạn chắc chắn muốn hủy mã QR này và nhập lại số tiền?', resolve);
+                else resolve(window.confirm('Bạn chắc chắn muốn hủy mã QR này và nhập lại số tiền?'));
+            });
+            if (!ok) return;
+            const cancelButton = document.getElementById('deposit-cancel-button');
+            if (cancelButton) { cancelButton.disabled = true; cancelButton.textContent = 'ĐANG HỦY...'; }
+            try {
+                const data = await apiRequest('/api/deposits/' + activeDeposit.deposit_id + '/cancel', {
+                    method: 'POST', body: JSON.stringify({})
+                });
+                if (countdownInterval) clearInterval(countdownInterval);
+                activeDeposit = null;
+                document.getElementById('qr-result-container').style.display = 'none';
+                document.getElementById('deposit-amount').value = '';
+                tg.HapticFeedback?.notificationOccurred('success');
+                tg.showAlert(data.message || 'Đã hủy mã nạp. Vui lòng nhập lại số tiền.');
+            } catch (error) {
+                tg.showAlert(error.message || 'Không thể hủy mã nạp.');
+                if (cancelButton) { cancelButton.disabled = false; cancelButton.textContent = 'HỦY MÃ NẠP / NHẬP LẠI SỐ TIỀN'; }
+            }
         }
 
         async function confirmPaidAction() {
