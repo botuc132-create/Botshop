@@ -34,6 +34,14 @@ from telegram.ext import (
     ContextTypes, filters,
 )
 
+try:
+    from telethon import TelegramClient, events
+    from telethon.sessions import StringSession
+except ImportError:
+    TelegramClient = None
+    events = None
+    StringSession = None
+
 DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
 BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
 SHOPYURI_API_TOKEN = ''.join(os.getenv('SHOPYURI_API_TOKEN', '').split())
@@ -53,6 +61,10 @@ QR_MEMO_SUFFIX = os.getenv('QR_MEMO_SUFFIX', 'NAP').strip().upper() or 'NAP'
 SEPAY_GROUP_ID = int(os.getenv('SEPAY_GROUP_ID', '-1004405246932').strip() or '-1004405246932')
 SEPAY_SENDER_ID_RAW = os.getenv('SEPAY_SENDER_ID', '').strip()
 SEPAY_SENDER_ID = int(SEPAY_SENDER_ID_RAW) if SEPAY_SENDER_ID_RAW.lstrip('-').isdigit() else None
+TG_API_ID = os.getenv('TG_API_ID', '').strip()
+TG_API_HASH = os.getenv('TG_API_HASH', '').strip()
+TG_SESSION_STRING = os.getenv('TG_SESSION_STRING', '').strip()
+TELETHON_CLIENT = None
 MINI_APP_URL = os.getenv('MINI_APP_URL', '').strip()
 CUSTOM_BUTTON_EMOJI_ID = '6168207816042487487'
 DB_POOL = None
@@ -117,8 +129,8 @@ ADMIN_KB = InlineKeyboardMarkup([
     [quick_button('Dừng bán / Bật bán lại', callback_data='adm:delproduct')],
     [quick_button('Thêm key sản phẩm', callback_data='adm:addkeys')],
     [quick_button('Kiểm tra kho', callback_data='adm:stock')],
-    [quick_button('Bảo trì: Bật / Tắt', callback_data='adm:maintenance')],
     [quick_button('🤖 Tự duyệt SePay: Bật / Tắt', callback_data='adm:sepay_toggle')],
+    [quick_button('Bảo trì: Bật / Tắt', callback_data='adm:maintenance')],
     [quick_button('Kho Emoji NewsEmoji', callback_data='adm:emoji')],
 ])
 
@@ -261,6 +273,7 @@ def init_db():
         "ALTER TABLE deposits ADD COLUMN IF NOT EXISTS sepay_matched_at TEXT",
         "ALTER TABLE deposits ADD COLUMN IF NOT EXISTS auto_approved BOOLEAN NOT NULL DEFAULT FALSE",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_deposits_sepay_memo ON deposits(sepay_memo) WHERE sepay_memo IS NOT NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_sepay_chat_message ON sepay_transactions(chat_id,message_id)",
         '''CREATE TABLE IF NOT EXISTS balance_transactions (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id),
             admin_id BIGINT NOT NULL, action TEXT NOT NULL CHECK(action IN ('add','subtract','deposit')) ,
@@ -308,19 +321,10 @@ def user_menu_text(user, balance):
 
 def admin_menu_text(): return '🛠 QUẢN TRỊ SHOP\nChọn chức năng bên dưới:'
 
-def get_bot_setting(key, default='off'):
-    with db() as con:
-        row = con.execute('SELECT setting_value FROM bot_settings WHERE setting_key=?', (key,)).fetchone()
-    return row['setting_value'] if row else default
-
-def set_bot_setting(key, value):
-    with db() as con:
-        con.execute('''INSERT INTO bot_settings(setting_key,setting_value,updated_at) VALUES(?,?,?)
-            ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=EXCLUDED.updated_at''',
-            (key, str(value), now()))
-
 def maintenance_enabled():
-    return get_bot_setting('maintenance', 'off') == 'on'
+    with db() as con:
+        row=con.execute("SELECT setting_value FROM bot_settings WHERE setting_key='maintenance'").fetchone()
+    return bool(row and row['setting_value']=='on')
 
 def main_menu_markup():
     rows = []
@@ -1007,20 +1011,12 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text('Đã hủy đơn mua hàng.', reply_markup=inline_back('shop:home'))
     elif data == 'adm:menu': await q.edit_message_text(admin_menu_text(), reply_markup=ADMIN_KB)
     elif data == 'adm:sepay_toggle':
-        current = get_bot_setting('sepay_auto_approve', 'on')
-        updated = 'off' if current == 'on' else 'on'
-        set_bot_setting('sepay_auto_approve', updated)
-        state_text = '🟢 ĐANG BẬT' if updated == 'on' else '🔴 ĐANG TẮT'
-        await q.edit_message_text(
-            '🤖 QUẢN LÝ TỰ DUYỆT SEPAY\n\n'
-            f'Trạng thái: {state_text}\n'
-            f'Nhóm theo dõi: {SEPAY_GROUP_ID}\n'
-            f'ID người gửi lọc: {SEPAY_SENDER_ID if SEPAY_SENDER_ID is not None else "Không lọc"}\n'
-            'Thời gian chờ: 6 giây\n\n'
-            'Bot chỉ tự duyệt khi nhận được tin giao dịch hợp lệ trong nhóm, khớp chính xác mã đơn và số tiền. '
-            'Nếu Telegram không chuyển tin nhắn từ bot SePay đến bot shop, chức năng sẽ không nhận được giao dịch.',
-            reply_markup=ADMIN_KB
-        )
+        with db() as con:
+            row = con.execute("SELECT setting_value FROM bot_settings WHERE setting_key='sepay_auto_approve'").fetchone()
+            updated = 'off' if row and row['setting_value'] == 'on' else 'on'
+            con.execute("INSERT INTO bot_settings(setting_key,setting_value,updated_at) VALUES('sepay_auto_approve',?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=EXCLUDED.updated_at", (updated, now()))
+        state = '🟢 ĐANG BẬT' if updated == 'on' else '🔴 ĐANG TẮT'
+        await q.edit_message_text(f'🤖 TỰ DUYỆT SEPAY\n\nTrạng thái: {state}\nNhóm theo dõi: {SEPAY_GROUP_ID}\nNguồn đọc: Telethon tài khoản Telegram\nThời gian chờ: 6 giây', reply_markup=ADMIN_KB)
     elif data == 'adm:emoji':
         try:
             sticker_set = await context.bot.get_sticker_set(name='NewsEmoji')
@@ -1586,13 +1582,13 @@ def extract_sepay_incoming_amount(message_text):
 
 
 async def auto_approve_deposit_after_delay(deposit_id, delay=6):
-    # Admin can disable automatic approval at any time from /admin.
-    await asyncio.sleep(delay)
-    if get_bot_setting('sepay_auto_approve', 'on') != 'on':
-        log.info('Automatic SePay approval is disabled; deposit #%s remains for manual review', deposit_id)
-        return
+    with db() as settings_con:
+        setting = settings_con.execute("SELECT setting_value FROM bot_settings WHERE setting_key='sepay_auto_approve'").fetchone()
+        if setting and setting['setting_value'] != 'on':
+            return
     # Match by the 3 digits after NAP, but require amount, submitted state,
     # 5-minute validity, and a unique candidate. All rows are locked before credit.
+    await asyncio.sleep(delay)
     approved = None
     with db() as con:
         dep = con.execute('SELECT d.*,u.username,u.full_name FROM deposits d JOIN users u ON u.user_id=d.user_id WHERE d.id=? FOR UPDATE OF d', (deposit_id,)).fetchone()
@@ -1656,50 +1652,99 @@ async def auto_approve_deposit_after_delay(deposit_id, delay=6):
                 log.exception('Could not notify admin about auto-approved deposit #%s', deposit_id)
 
 
-async def sepay_transaction_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
-    if not msg or msg.chat_id != SEPAY_GROUP_ID:
+async def process_sepay_transaction(message_text, chat_id, message_id, sender_id):
+    if int(chat_id) != SEPAY_GROUP_ID:
         return
-
-    # SePay notifications may arrive as plain text, photo captions, or channel-style
-    # posts. In the latter case Telegram can populate sender_chat instead of from_user.
-    message_text = (msg.text or msg.caption or '').strip()
+    message_text = str(message_text or '').strip()
     if not message_text:
-        log.info('SePay group update has no text/caption (chat=%s message=%s)', msg.chat_id, msg.message_id)
+        log.info('SePay update has no text/caption (chat=%s message=%s)', chat_id, message_id)
         return
-
-    sender = msg.from_user
-    sender_chat = getattr(msg, 'sender_chat', None)
-    sender_id = sender.id if sender else (sender_chat.id if sender_chat else None)
-
-    # Do not require from_user.is_bot: channel posts and integrations can use sender_chat.
-    # If an explicit sender ID is configured, enforce it against either Telegram sender type.
     if SEPAY_SENDER_ID is not None and sender_id != SEPAY_SENDER_ID:
         log.info('Ignored SePay message due to sender mismatch (chat=%s sender=%s expected=%s message=%s)',
-                 msg.chat_id, sender_id, SEPAY_SENDER_ID, msg.message_id)
+                 chat_id, sender_id, SEPAY_SENDER_ID, message_id)
         return
-
     memo = extract_sepay_memo(message_text)
     suffix = extract_sepay_order_suffix(memo)
     amount = extract_sepay_incoming_amount(message_text)
     if not memo or not suffix or amount is None or amount <= 0:
-        log.info('Ignored SePay message without a valid memo suffix/amount (chat=%s sender=%s message=%s text=%r)',
-                 msg.chat_id, sender_id, msg.message_id, message_text[:500])
+        log.info('Ignored SePay message without valid memo/amount (chat=%s sender=%s message=%s text=%r)',
+                 chat_id, sender_id, message_id, message_text[:500])
         return
-
-    log.info('Received SePay transaction (chat=%s sender=%s message=%s memo=%s suffix=%s amount=%s)',
-             msg.chat_id, sender_id, msg.message_id, memo, suffix, amount)
     with db() as con:
-        con.execute("""INSERT INTO sepay_transactions(memo,amount,chat_id,message_id,sender_id,received_at)
-            VALUES(?,?,?,?,?,?) ON CONFLICT(memo) DO NOTHING""",
-            (memo, amount, msg.chat_id, msg.message_id, sender_id, now()))
+        inserted = con.execute("""INSERT INTO sepay_transactions(memo,amount,chat_id,message_id,sender_id,received_at)
+            VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING RETURNING memo""",
+            (memo, amount, chat_id, message_id, sender_id, now())).fetchone()
+        # Bot API and Telethon may both observe the same group message.
+        # The unique (chat_id,message_id) index makes exactly one listener process it.
+        if not inserted:
+            return
         matches = con.execute("""SELECT id FROM deposits
             WHERE status='submitted' AND amount=? AND RIGHT(note,3)=?
               AND created_at::timestamptz >= NOW() - INTERVAL '5 minutes'
             ORDER BY id""", (amount, suffix)).fetchall()
+    log.info('Received SePay transaction once (chat=%s sender=%s message=%s memo=%s suffix=%s amount=%s)',
+             chat_id, sender_id, message_id, memo, suffix, amount)
     log.info('SePay transaction matched %s submitted deposit(s) by amount and suffix', len(matches))
     for row in matches:
         asyncio.create_task(auto_approve_deposit_after_delay(int(row['id']), 6))
+
+
+async def sepay_transaction_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    if not msg:
+        return
+    message_text = (msg.text or msg.caption or '').strip()
+    sender = msg.from_user
+    sender_chat = getattr(msg, 'sender_chat', None)
+    sender_id = sender.id if sender else (sender_chat.id if sender_chat else None)
+    await process_sepay_transaction(message_text, msg.chat_id, msg.message_id, sender_id)
+
+
+async def start_telethon_monitor(application):
+    global TELETHON_CLIENT
+    if not (TG_API_ID.isdigit() and TG_API_HASH and TG_SESSION_STRING):
+        log.warning('Telethon monitor not started: configure TG_API_ID, TG_API_HASH and TG_SESSION_STRING')
+        return
+    if TelegramClient is None:
+        log.error('Telethon package missing. Add telethon to requirements.txt')
+        return
+    try:
+        TELETHON_CLIENT = TelegramClient(StringSession(TG_SESSION_STRING), int(TG_API_ID), TG_API_HASH)
+        await TELETHON_CLIENT.connect()
+        if not await TELETHON_CLIENT.is_user_authorized():
+            log.error('Telethon session is not authorized; regenerate TG_SESSION_STRING locally')
+            await TELETHON_CLIENT.disconnect()
+            TELETHON_CLIENT = None
+            return
+
+        @TELETHON_CLIENT.on(events.NewMessage(chats=SEPAY_GROUP_ID))
+        async def _on_sepay_message(event):
+            try:
+                sender_id = event.sender_id
+                await process_sepay_transaction(event.raw_text or '', event.chat_id, event.id, sender_id)
+            except Exception:
+                log.exception('Telethon SePay message processing failed')
+
+        log.info('Telethon SePay monitor connected (group=%s)', SEPAY_GROUP_ID)
+    except Exception:
+        log.exception('Could not start Telethon SePay monitor')
+        if TELETHON_CLIENT:
+            try: await TELETHON_CLIENT.disconnect()
+            except Exception: pass
+        TELETHON_CLIENT = None
+
+
+async def stop_telethon_monitor(application):
+    global TELETHON_CLIENT
+    if TELETHON_CLIENT:
+        await TELETHON_CLIENT.disconnect()
+        TELETHON_CLIENT = None
+        log.info('Telethon SePay monitor disconnected')
+
+
+async def bot_post_init(application):
+    await configure_miniapp_menu_button(application)
+    await start_telethon_monitor(application)
 
 
 async def notify_admins(context, deposit_id, amount, memo, full_name, uid, username):
@@ -2860,7 +2905,7 @@ def main():
     except Exception:
         log.exception('Database initialization failed')
         raise SystemExit('Database initialization failed; check Paella Logs')
-    app = Application.builder().token(BOT_TOKEN).post_init(configure_miniapp_menu_button).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(bot_post_init).post_shutdown(stop_telethon_monitor).build()
     telegram_application = app
     app.add_handler(CommandHandler('start', start)); app.add_handler(CommandHandler('admin', admin_cmd))
     app.add_handler(CallbackQueryHandler(callback))
@@ -2870,7 +2915,7 @@ def main():
     port = int(os.getenv('PORT', '3000'))
     web_thread = threading.Thread(target=lambda: uvicorn.run(web_app, host='0.0.0.0', port=port, log_level='info'), daemon=True)
     web_thread.start()
-    log.info('Shop bot + Mini App API started on port %s (SEPAY_GROUP_ID=%s, SEPAY_SENDER_ID=%s)', port, SEPAY_GROUP_ID, SEPAY_SENDER_ID)
+    log.info('Shop bot + Mini App API started on port %s (SEPAY_GROUP_ID=%s, SEPAY_SENDER_ID=%s, TELETHON=%s)', port, SEPAY_GROUP_ID, SEPAY_SENDER_ID, bool(TG_SESSION_STRING))
     # Keep the bot polling when Telegram is temporarily unavailable during startup.
     app.run_polling(allowed_updates=Update.ALL_TYPES, bootstrap_retries=-1)
 
