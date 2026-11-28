@@ -258,7 +258,6 @@ def init_db():
             amount BIGINT NOT NULL CHECK(amount > 0), balance_after BIGINT NOT NULL,
             note TEXT, created_at TEXT NOT NULL)''',
         '''DO $$ DECLARE r RECORD; BEGIN
-            -- Cho phép admin tạo thời hạn tùy ý như 12 giờ hoặc 90 ngày.
             FOR r IN
                 SELECT conname FROM pg_constraint
                 WHERE conrelid = 'public.product_options'::regclass
@@ -268,11 +267,6 @@ def init_db():
                 EXECUTE format('ALTER TABLE public.product_options DROP CONSTRAINT %I', r.conname);
             END LOOP;
         END $$''',
-        '''INSERT INTO product_options(product_id,duration,duration_label,price,sell_price)
-            SELECT p.id, d.duration, d.label, 0, 0
-            FROM products p
-            CROSS JOIN (VALUES ('7d','7 ngày'),('30d','30 ngày')) AS d(duration,label)
-            ON CONFLICT(product_id,duration) DO NOTHING''',
         "CREATE INDEX IF NOT EXISTS idx_product_keys_stock ON product_keys(option_id,status)",
         "CREATE INDEX IF NOT EXISTS idx_purchases_user ON purchases(user_id,created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_users_username ON users(LOWER(username))",
@@ -311,12 +305,12 @@ def maintenance_enabled():
 def main_menu_markup():
     rows = []
     if MINI_APP_URL.startswith('https://'):
-        rows.append([quick_button('Mở Mini App – Giao dịch nhanh', web_app=WebAppInfo(url=MINI_APP_URL))])
+        rows.append([quick_button('⚡ Mở Mini App – Mua hàng nhanh', web_app=WebAppInfo(url=MINI_APP_URL))])
     rows.extend([
-        [quick_button('Tài Khoản', callback_data='menu:account'), quick_button('Lịch Sử Mua', callback_data='menu:history')],
-        [quick_button('Cửa Hàng', callback_data='shop:home'), quick_button('Nạp Tiền', callback_data='menu:deposit')],
-        [quick_button('Hướng dẫn cách cài', callback_data='menu:guide')],
-        [quick_button('Hỗ Trợ', callback_data='menu:support')],
+        [quick_button('🛍 Mua hàng – Cửa Hàng', callback_data='shop:home'), quick_button('💳 Nạp Tiền', callback_data='menu:deposit')],
+        [quick_button('👤 Tài Khoản', callback_data='menu:account'), quick_button('📜 Lịch Sử Mua', callback_data='menu:history')],
+        [quick_button('📖 Hướng dẫn cách cài', callback_data='menu:guide')],
+        [quick_button('🆘 Hỗ Trợ', callback_data='menu:support')],
     ])
     return InlineKeyboardMarkup(rows)
 
@@ -386,7 +380,7 @@ async def show_shop(message, edit=False):
         if edit: await message.edit_text(txt, reply_markup=inline_back('shop:home'))
         else: await message.reply_text(txt)
         return
-    rows = [[quick_button(c['name'], callback_data=f"shop:cat:{c['id']}")] for c in cats]
+    rows = [[quick_button(f"🛍 {c['name']}", callback_data=f"shop:cat:{c['id']}")] for c in cats]
     rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
     txt = '🎮 DANH MỤC: SHOP\n\n❝ Chọn danh mục bên dưới để xem sản phẩm và gói thời hạn: ❞'
     if edit: await message.edit_text(txt, reply_markup=InlineKeyboardMarkup(rows))
@@ -410,7 +404,7 @@ async def show_category(q, category_id, user_id):
         src_str = f"Kho còn: {int(o.get('shopyuri_stock') or 0)}" if o.get('shopyuri_product_id') else f"Kho còn: {stock_for_option(o['id'])}"
             
         current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
-        btn_text = f"{o['product_name']} - {o['duration_label']} — {current_price:,}đ [{src_str}]"
+        btn_text = f"🛍 {o['product_name']} - {o['duration_label']} — {current_price:,}đ [{src_str}]"
         rows.append([quick_button(btn_text, callback_data=f"shop:option:{o['id']}")])
     rows.append([InlineKeyboardButton('🌐 Quay Lại', callback_data='shop:home')])
     
@@ -426,12 +420,12 @@ async def show_quantity(q, option_id, context, user_id):
     current_price = o['sell_price'] if (is_seller and o['sell_price'] > 0) else o['price']
     context.user_data['selected_option']=option_id
     buttons=[
-        [quick_button('Mua 1 Key',callback_data=f'shop:qty:{option_id}:1'),
-         quick_button('Mua 2 Key',callback_data=f'shop:qty:{option_id}:2')],
-        [quick_button('Mua 3 Key',callback_data=f'shop:qty:{option_id}:3'),
-         quick_button('Mua 5 Key',callback_data=f'shop:qty:{option_id}:5')],
-        [quick_button('Mua 10 Key',callback_data=f'shop:qty:{option_id}:10')],
-        [quick_button('Mua số lượng khác',callback_data=f'shop:qty:{option_id}:other')],
+        [quick_button('🛍 Mua 1 Key',callback_data=f'shop:qty:{option_id}:1'),
+         quick_button('🛍 Mua 2 Key',callback_data=f'shop:qty:{option_id}:2')],
+        [quick_button('🛍 Mua 3 Key',callback_data=f'shop:qty:{option_id}:3'),
+         quick_button('🛍 Mua 5 Key',callback_data=f'shop:qty:{option_id}:5')],
+        [quick_button('🛍 Mua 10 Key',callback_data=f'shop:qty:{option_id}:10')],
+        [quick_button('🛍 Mua số lượng khác',callback_data=f'shop:qty:{option_id}:other')],
         [InlineKeyboardButton('📂 Quay Lại',callback_data=f"shop:cat:{o['category_id']}")]
     ]
     src_text = f"Kho còn: {int(o.get('shopyuri_stock') or 0)} key" if o.get('shopyuri_product_id') else f"Kho còn: {stock_for_option(option_id)} key"
@@ -459,7 +453,7 @@ async def show_confirm(q, option_id, qty, context, user_id):
         f"\n📦 Sản phẩm: {escape(o['product_name'])}\n⏳ Thời hạn: {escape(o['duration_label'])}"
         f"\n🔢 Số lượng: {qty}\n💰 Giá bán: {total:,}đ\n{payment_note}\n\nBạn xác nhận mua chứ?",
         reply_markup=InlineKeyboardMarkup([
-            [quick_button('XÁC NHẬN MUA', callback_data='shop:confirm')],
+            [quick_button('🛍 XÁC NHẬN MUA HÀNG', callback_data='shop:confirm')],
             [quick_button('HỦY', style='danger', callback_data='shop:cancel')],
         ]),
         parse_mode='HTML',
@@ -692,7 +686,7 @@ async def do_purchase(q, update, context):
         f"💰 Tổng tiền: <b>{total:,}đ</b>\n\n"
         f"🔑 <b>KEY CỦA BẠN:</b>\n<code>{escape(key_text)}</code>"
     )
-    buttons = [[quick_button('🛍 Mua key tiếp', callback_data='shop:home')]]
+    buttons = [[quick_button('🛍 Mua hàng tiếp', callback_data='shop:home')]]
     if guide_url:
         buttons.append([InlineKeyboardButton('📖 Cách cài', url=guide_url)])
     await q.edit_message_text(success_msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(buttons))
@@ -718,10 +712,13 @@ async def user_history(q, uid):
         )
     await q.edit_message_text('\n'.join(out), parse_mode='HTML', reply_markup=inline_back('menu:home'))
 
-async def broadcast(bot, text, photo=None, status_message=None, reply_markup=None):
-    with db() as con: 
+async def broadcast(bot, payload_data, status_message=None, reply_markup=None):
+    if isinstance(payload_data, str):
+        payload_data = {'kind': 'text', 'text': payload_data}
+
+    with db() as con:
         users = con.execute('SELECT user_id FROM users WHERE is_locked=FALSE').fetchall()
-    
+
     total = len(users)
     if total == 0:
         if status_message:
@@ -737,14 +734,52 @@ async def broadcast(bot, text, photo=None, status_message=None, reply_markup=Non
         except Exception:
             status_message = await bot.send_message(chat_id=status_message.chat_id, text=f'🚀 Đang tiến hành gửi thông báo đến {total} người dùng...')
 
+    kind = payload_data.get('kind') or ('photo' if payload_data.get('photo') else 'text')
+    text = payload_data.get('text') or ''
+    photo = payload_data.get('photo')
+    sticker = payload_data.get('sticker')
+    entities = payload_data.get('entities')
+    from_chat_id = payload_data.get('from_chat_id')
+    message_id = payload_data.get('message_id')
+
     sent = 0
     for index, u in enumerate(users, 1):
         uid = u['user_id']
         try:
-            if photo:
-                await bot.send_photo(chat_id=uid, photo=photo, caption=text, parse_mode='HTML', reply_markup=reply_markup)
+            if kind == 'forward' and from_chat_id and message_id:
+                await bot.forward_message(
+                    chat_id=uid,
+                    from_chat_id=from_chat_id,
+                    message_id=message_id,
+                )
+            elif kind == 'sticker' and sticker:
+                await bot.send_sticker(
+                    chat_id=uid,
+                    sticker=sticker,
+                    reply_markup=reply_markup,
+                )
+            elif kind == 'copy' and from_chat_id and message_id:
+                await bot.copy_message(
+                    chat_id=uid,
+                    from_chat_id=from_chat_id,
+                    message_id=message_id,
+                    reply_markup=reply_markup,
+                )
+            elif photo:
+                await bot.send_photo(
+                    chat_id=uid,
+                    photo=photo,
+                    caption=text or None,
+                    caption_entities=entities,
+                    reply_markup=reply_markup,
+                )
             else:
-                await bot.send_message(chat_id=uid, text=text, parse_mode='HTML', reply_markup=reply_markup)
+                await bot.send_message(
+                    chat_id=uid,
+                    text=text,
+                    entities=entities,
+                    reply_markup=reply_markup,
+                )
             sent += 1
             await asyncio.sleep(0.04)
         except Exception as e:
@@ -829,8 +864,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == 'adm:broadcast:confirm':
         pending_bc = context.user_data.pop('pending_broadcast', None)
-        
-        if not pending_bc or not pending_bc.get('text'):
+
+        if not pending_bc:
             msg_obj = q.message
             if msg_obj:
                 raw_text = msg_obj.caption or msg_obj.text or ''
@@ -839,9 +874,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     bc_text = raw_text
                 photo = msg_obj.photo[-1].file_id if msg_obj.photo else None
-                pending_bc = {'text': bc_text, 'photo': photo}
+                pending_bc = {'kind': 'photo' if photo else 'text', 'text': bc_text, 'photo': photo}
 
-        if not pending_bc or not pending_bc.get('text'):
+        if not pending_bc:
             try:
                 await q.edit_message_text('⚠️ Không tìm thấy nội dung thông báo. Vui lòng tạo lại thông báo từ đầu.', reply_markup=ADMIN_KB)
             except Exception:
@@ -855,7 +890,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        await broadcast(context.bot, pending_bc['text'], pending_bc.get('photo'), status_message=status_msg)
+        await broadcast(context.bot, pending_bc, status_message=status_msg)
         return
 
     elif data == 'adm:broadcast:cancel':
@@ -1035,7 +1070,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'adm:broadcast':
         context.user_data['flow'] = 'broadcast_content'
         if q.message:
-            await q.message.reply_text('Gửi nội dung thông báo (có thể kèm ảnh hoặc chỉ văn bản) muốn gửi đến tất cả người dùng:')
+            await q.message.reply_text(
+                'Gửi nội dung thông báo bất kỳ (văn bản có định dạng, ảnh, video, GIF, nhãn dán/sticker hoặc chuyển tiếp tin nhắn từ người/nhóm/kênh khác):'
+            )
     elif data == 'adm:checkls':
         kb = InlineKeyboardMarkup([
             [quick_button('LS Mua Key', callback_data='adm:ls_buy'),
@@ -1574,7 +1611,10 @@ async def handle_deposit_review(q, context, data):
         await q.message.reply_text('Có lỗi khi xử lý đơn nạp. Kiểm tra Logs trước khi thao tác lại.')
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message; text = (msg.text or '').strip(); flow = context.user_data.get('flow'); user = update.effective_user
+    msg = update.message
+    if msg is None:
+        return
+    text = (msg.text or '').strip(); flow = context.user_data.get('flow'); user = update.effective_user
     if text == '↩️ Trở về':
         context.user_data.clear()
         await msg.reply_text('✅ Đã gỡ nút Trở về cũ.', reply_markup=ReplyKeyboardRemove())
@@ -1602,28 +1642,80 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if flow == 'broadcast_content' and is_admin(update):
-        photo_file_id = None
-        if msg.photo:
-            photo_file_id = msg.photo[-1].file_id
-            bc_text = msg.caption or ''
-        else:
-            bc_text = text
-
-        context.user_data['pending_broadcast'] = {
-            'text': bc_text,
-            'photo': photo_file_id
-        }
-        context.user_data['flow'] = None
-
         preview_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton('✅ Xác nhận gửi', callback_data='adm:broadcast:confirm'),
              InlineKeyboardButton('❌ Hủy', callback_data='adm:broadcast:cancel')]
         ])
-        
-        if photo_file_id:
-            await msg.reply_photo(photo=photo_file_id, caption=f"📢 <b>XEM TRƯỚC THÔNG BÁO:</b>\n\n{bc_text}", parse_mode='HTML', reply_markup=preview_kb)
-        else:
-            await msg.reply_text(f"📢 <b>XEM TRƯỚC THÔNG BÁO:</b>\n\n{bc_text}", parse_mode='HTML', reply_markup=preview_kb)
+
+        if getattr(msg, 'forward_origin', None) is not None:
+            bc_payload = {
+                'kind': 'forward',
+                'from_chat_id': msg.chat_id,
+                'message_id': msg.message_id,
+            }
+            context.user_data['pending_broadcast'] = bc_payload
+            context.user_data['flow'] = None
+            await context.bot.forward_message(chat_id=msg.chat_id, from_chat_id=msg.chat_id, message_id=msg.message_id)
+            await msg.reply_text('📢 <b>XEM TRƯỚC THÔNG BÁO CHUYỂN TIẾP</b> (giữ nguyên nguồn & kiểu chữ):', parse_mode='HTML', reply_markup=preview_kb)
+            return
+
+        if msg.sticker:
+            sticker_id = msg.sticker.file_id
+            bc_payload = {
+                'kind': 'sticker',
+                'sticker': sticker_id,
+            }
+            context.user_data['pending_broadcast'] = bc_payload
+            context.user_data['flow'] = None
+            await msg.reply_sticker(sticker=sticker_id)
+            await msg.reply_text('📢 <b>XEM TRƯỚC THÔNG BÁO NHÃN DÁN:</b>', parse_mode='HTML', reply_markup=preview_kb)
+            return
+
+        if msg.photo:
+            photo_file_id = msg.photo[-1].file_id
+            bc_text = msg.caption or ''
+            bc_entities = msg.caption_entities or None
+            bc_payload = {
+                'kind': 'photo',
+                'text': bc_text,
+                'photo': photo_file_id,
+                'entities': bc_entities,
+            }
+            context.user_data['pending_broadcast'] = bc_payload
+            context.user_data['flow'] = None
+            await msg.reply_photo(
+                photo=photo_file_id,
+                caption=bc_text or '📢 Xem trước thông báo ảnh',
+                caption_entities=bc_entities,
+                reply_markup=preview_kb,
+            )
+            return
+
+        if msg.text is not None:
+            bc_entities = msg.entities or None
+            bc_payload = {
+                'kind': 'text',
+                'text': msg.text,
+                'entities': bc_entities,
+            }
+            context.user_data['pending_broadcast'] = bc_payload
+            context.user_data['flow'] = None
+            await msg.reply_text(
+                msg.text,
+                entities=bc_entities,
+                reply_markup=preview_kb,
+            )
+            return
+
+        bc_payload = {
+            'kind': 'copy',
+            'from_chat_id': msg.chat_id,
+            'message_id': msg.message_id,
+        }
+        context.user_data['pending_broadcast'] = bc_payload
+        context.user_data['flow'] = None
+        await context.bot.copy_message(chat_id=msg.chat_id, from_chat_id=msg.chat_id, message_id=msg.message_id)
+        await msg.reply_text('📢 <b>XEM TRƯỚC THÔNG BÁO:</b>', parse_mode='HTML', reply_markup=preview_kb)
         return
 
     if flow == 'custom_quantity':
@@ -1638,7 +1730,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         qty = int(text); context.user_data['pending_purchase'] = {'option_id': oid, 'quantity': qty, 'total': current_price * qty}
         p = context.user_data['pending_purchase']
         payment_note = ('Bot sẽ trừ số dư nội bộ; Shopyuri cấp key.' if o.get('shopyuri_product_id') else 'Bot sẽ kiểm tra kho và số dư trước khi trừ tiền.')
-        await msg.reply_text(f"🧾 XÁC NHẬN MUA HÀNG\n\n📁 Danh mục: {escape(o['category_name'])}\n📦 Sản phẩm: {escape(o['product_name'])}\n⏳ Thời hạn: {escape(o['duration_label'])}\n🔢 Số lượng: {p['quantity']}\n💰 Giá bán: {p['total']:,}đ\n\n{payment_note}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('✅ XÁC NHẬN MUA', callback_data='shop:confirm')], [InlineKeyboardButton('❌ HỦY', callback_data='shop:cancel')], [InlineKeyboardButton('↩️ Trở về', callback_data='menu:home')]])); return
+        await msg.reply_text(f"🧾 XÁC NHẬN MUA HÀNG\n\n📁 Danh mục: {escape(o['category_name'])}\n📦 Sản phẩm: {escape(o['product_name'])}\n⏳ Thời hạn: {escape(o['duration_label'])}\n🔢 Số lượng: {p['quantity']}\n💰 Giá bán: {p['total']:,}đ\n\n{payment_note}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[quick_button('🛍 XÁC NHẬN MUA HÀNG', callback_data='shop:confirm')], [InlineKeyboardButton('❌ HỦY', callback_data='shop:cancel')], [InlineKeyboardButton('↩️ Trở về', callback_data='menu:home')]])); return
     if flow == 'deposit_amount':
         if not text.isdigit() or not 1 <= int(text) <= 1_000_000_000:
             await msg.reply_text('Số tiền không hợp lệ. Nhập số nguyên từ 1 đến 1.000.000.000 VNĐ:'); return
@@ -1773,9 +1865,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             with db() as con:
                 p = con.execute('INSERT INTO products(category_id,name,created_by,created_at) VALUES(?,?,?,?) RETURNING id', (cid, text, user.id, now())).fetchone()
-                con.execute("INSERT INTO product_options(product_id,duration,duration_label,price,sell_price) VALUES(?,'1h','1 giờ',0,0),(?,'1d','1 ngày',0,0),(?,'7d','7 ngày',0,0),(?,'30d','30 ngày',0,0)", (p['id'], p['id'], p['id'], p['id']))
+                con.execute("INSERT INTO product_options(product_id,duration,duration_label,price,sell_price) VALUES(?,'1h','1 giờ',0,0),(?,'1d','1 ngày',0,0)", (p['id'], p['id']))
             context.user_data.clear()
-            await msg.reply_text(f'✅ Thêm sản phẩm "{text}" thành công!\n\nĐã tạo 4 gói thời hạn.', reply_markup=ADMIN_KB)
+            await msg.reply_text(f'✅ Thêm sản phẩm "{text}" thành công!\n\nĐã tạo các gói thời hạn mặc định.', reply_markup=ADMIN_KB)
         except Exception:
             log.exception('Add product failed')
             context.user_data.clear(); await msg.reply_text('❌ Không thể thêm sản phẩm. Kiểm tra Logs.', reply_markup=ADMIN_KB)
@@ -1813,7 +1905,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text(f'✅ Đã thêm {added}/{len(keys)} key thành công. Kho hiện có: {stock} key.', reply_markup=ADMIN_KB)
         if added and info:
             announcement = (f"🔥 CÓ HÀNG MỚI VỀ! 🔥\n━━━━━━━━━━━━━━━━━━\n📁 Danh mục: {escape(info['category_name'])}\n🎮 Sản phẩm: {escape(info['duration_label'])}\n🔢 Số lượng: {added} sản phẩm đã được cập nhật!\n\n👉 Nhấn nút bên dưới để mở Mini App và mua ngay!")
-            shop_markup = InlineKeyboardMarkup([[InlineKeyboardButton('🚀 MỞ MINI APP', web_app=WebAppInfo(url=MINI_APP_URL))]]) if MINI_APP_URL.startswith('https://') else None
+            shop_markup = InlineKeyboardMarkup([[quick_button('🛍 MỞ MINI APP – MUA HÀNG', web_app=WebAppInfo(url=MINI_APP_URL))]]) if MINI_APP_URL.startswith('https://') else None
             sent = await broadcast(context.bot, announcement, reply_markup=shop_markup)
             await msg.reply_text(f'📢 Đã thông báo tới {sent} người dùng.')
         return
@@ -1865,7 +1957,8 @@ async def broadcast_new_stock_http(text):
     if MINI_APP_URL.startswith('https://'):
         reply_markup = {
             'inline_keyboard': [[{
-                'text': '🚀 MỞ MINI APP',
+                'text': '🛍 MỞ MINI APP – MUA HÀNG',
+                'icon_custom_emoji_id': CUSTOM_BUTTON_EMOJI_ID,
                 'web_app': {'url': MINI_APP_URL},
             }]]
         }
@@ -1968,13 +2061,6 @@ def api_me(request: Request):
 
 
 def _build_shopyuri_catalog_for_user(user_id):
-    """Build the customer catalog from the shared local database.
-
-    Supplier-mapped options and legacy/local-stock options deliberately share
-    the same response shape. Older products have a NULL shopyuri_product_id;
-    filtering them out here made the admin toggle appear successful while the
-    Mini App catalog remained empty for those products.
-    """
     with db() as con:
         cats = con.execute('''SELECT DISTINCT c.id,c.name,c.guide_url,c.icon
             FROM categories c
@@ -2024,8 +2110,6 @@ async def _refresh_shopyuri_catalog_background():
 @web_app.get('/api/catalog')
 async def api_catalog(request: Request):
     user = _mini_user(request)
-    # Serve the last successful database snapshot immediately. This makes the Mini App
-    # open quickly; the provider refresh continues in the background.
     cached = await asyncio.to_thread(_build_shopyuri_catalog_for_user, user['id'])
     has_snapshot = any(cat.get('products') for cat in cached)
     force = request.query_params.get('refresh') == '1'
@@ -2050,8 +2134,6 @@ async def api_purchase(request: Request):
     user = _mini_user(request)
     payload = await request.json()
     raw_oid = str(payload.get('option_id') or '').strip()
-    # Never trust a supplier ID sent by the browser. The synchronized DB mapping is
-    # authoritative, just like the Telegram bot's purchase flow.
     try:
         qty = int(payload.get('quantity'))
         if qty < 1 or qty > 100:
@@ -2060,7 +2142,6 @@ async def api_purchase(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail='Số lượng hoặc gói sản phẩm không hợp lệ.')
 
-    # Trường hợp mua gói sản phẩm nội bộ hoặc gói gán Shopyuri qua backend
     supplier_order=''; key_text=''; con=db()
     try:
         con.execute('BEGIN')
@@ -2138,7 +2219,6 @@ async def api_purchase(request: Request):
 
 @web_app.post('/webhook/sepay')
 async def sepay_webhook(request: Request):
-    """Receive SePay incoming-transfer webhook and credit only an exact open deposit."""
     if not SEPAY_WEBHOOK_API_KEY:
         raise HTTPException(status_code=503, detail='Webhook API key is not configured.')
     auth = request.headers.get('authorization', '').strip()
@@ -2161,7 +2241,6 @@ async def sepay_webhook(request: Request):
         raise HTTPException(status_code=400, detail='Invalid transaction fields')
     if amount <= 0 or not txid or not content:
         raise HTTPException(status_code=400, detail='Missing transaction id, amount or content')
-    # Match the exact generated memo, not a partial suffix or a user-provided confirmation.
     match = re.search(r'SEVQR(\d+)NAP(\d+)', content)
     if not match:
         return {'success': True, 'matched': False}
@@ -2189,7 +2268,6 @@ async def sepay_webhook(request: Request):
         con.commit()
     if approved:
         uname = '@' + approved['username'] if approved['username'] else 'Không có'
-        # Restore the existing deposit-success notification style used by the original bot.
         notice = (f"NẠP TIỀN THÀNH CÔNG\nID: {approved['uid']}\nUsername: {uname}\n"
                   f"Full name: {approved['full_name'] or 'Không có'}\n+{approved['amount']:,}đ\nND: {approved['note']}\n"
                   f"Số dư: {approved['balance']:,}đ")
@@ -2325,7 +2403,6 @@ async def api_admin_overview(request: Request):
 
 
 def _extract_shopyuri_catalog(payload):
-    """Find a product/category array in common seller API response envelopes."""
     if isinstance(payload, list):
         return [x for x in payload if isinstance(x, dict)]
     if not isinstance(payload, dict):
@@ -2354,13 +2431,9 @@ def _shopyuri_get(obj, *keys, default=None):
 
 
 def _normalize_shopyuri_catalog(items):
-    """Normalize nested categories or flat product rows into categories/products/options."""
     grouped = {}
 
     def add_option(category_name, category_icon, product_name, option, product_id_fallback=None, stock_fallback=None):
-        # The ID sent to action=buy must be the supplier product_id. In nested
-        # responses, an option.id can be only a local variant ID, so prefer the
-        # parent product's explicit product_id before falling back to option.id.
         supplier_id = _shopyuri_get(option, 'product_id', 'item_id', 'sku_id')
         if supplier_id is None:
             supplier_id = product_id_fallback
@@ -2404,7 +2477,6 @@ def _normalize_shopyuri_catalog(items):
     for item in items:
         if not isinstance(item, dict):
             continue
-        # Nested category format: {name/category, products:[...]}
         nested_products = item.get('products')
         if isinstance(nested_products, list):
             cat_name = _shopyuri_get(item, 'name', 'category_name', 'title', default='Sản phẩm')
@@ -2424,7 +2496,6 @@ def _normalize_shopyuri_catalog(items):
                                _shopyuri_get(product, 'product_id', 'id'))
             continue
 
-        # Flat product format.
         cat_value = _shopyuri_get(item, 'category_name', 'category', 'group_name', 'category_title', default='Sản phẩm')
         if isinstance(cat_value, dict):
             cat_name = _shopyuri_get(cat_value, 'name', 'title', default='Sản phẩm')
@@ -2490,7 +2561,6 @@ def _request_shopyuri_catalog():
 def _sync_shopyuri_catalog(force=False):
     global _SHOPYURI_LAST_SYNC, _SHOPYURI_LAST_ERROR
     with _SHOPYURI_SYNC_LOCK:
-        # Short cache avoids firing multiple supplier requests while users open the Mini App together.
         if not force and _SHOPYURI_LAST_SYNC and time.time() - _SHOPYURI_LAST_SYNC < 45:
             return {'synced': True, 'cached': True}
         categories, action = _request_shopyuri_catalog()
@@ -2503,7 +2573,6 @@ def _sync_shopyuri_catalog(force=False):
             old_product_ids = [r['product_id'] for r in con.execute(
                 'SELECT DISTINCT product_id FROM product_options WHERE shophenry_product_id IS NOT NULL AND shopyuri_product_id IS NULL'
             ).fetchall()]
-            # Remove old provider-mapped packages and their local stock; purchase history is independent and retained.
             con.execute('DELETE FROM product_options WHERE shophenry_product_id IS NOT NULL AND shopyuri_product_id IS NULL')
 
             for category in categories:
@@ -2557,7 +2626,6 @@ def _sync_shopyuri_catalog(force=False):
 
             if not supplier_ids:
                 raise RuntimeError('API Shopyuri không trả về product_id dạng số; không thay đổi danh mục hiện tại.')
-            # Remove products no longer present in the new API, but leave purchases untouched.
             current_ids = [r['shopyuri_product_id'] for r in con.execute(
                 'SELECT shopyuri_product_id FROM product_options WHERE shopyuri_product_id IS NOT NULL'
             ).fetchall()]
@@ -2676,8 +2744,8 @@ async def api_admin_action(request: Request):
                 cid=int(data.get('category_id')); name=str(data.get('name','')).strip()
                 if not name or len(name)>100: raise HTTPException(status_code=400,detail='Tên sản phẩm không hợp lệ.')
                 row=con.execute('INSERT INTO products(category_id,name,created_by,created_at) VALUES(?,?,?,?) RETURNING id',(cid,name,admin['id'],now())).fetchone(); pid=row['id']
-                for dur,label in [('1h','1 giờ'),('1d','1 ngày'),('7d','7 ngày'),('30d','30 ngày')]: con.execute('INSERT INTO product_options(product_id,duration,duration_label,price,sell_price) VALUES(?,?,?,?,?)',(pid,dur,label,0,0))
-                return {'success':True,'message':f'Đã tạo sản phẩm {name} cùng 4 gói thời hạn.'}
+                for dur,label in [('1h','1 giờ'),('1d','1 ngày')]: con.execute('INSERT INTO product_options(product_id,duration,duration_label,price,sell_price) VALUES(?,?,?,?,?)',(pid,dur,label,0,0))
+                return {'success':True,'message':f'Đã tạo sản phẩm {name} cùng các gói thời hạn mặc định.'}
             if action=='add_guide':
                 cid=int(data.get('category_id')); url=str(data.get('url','')).strip()
                 if not url.startswith(('https://','http://')): raise HTTPException(status_code=400,detail='Link phải bắt đầu bằng http:// hoặc https://')
@@ -2731,7 +2799,6 @@ async def api_admin_action(request: Request):
                 con.execute('UPDATE products SET is_active=? WHERE id=?',(new_state,pid))
                 return {'success':True,'is_active':new_state,'message':('Đã bật bán lại sản phẩm ' if new_state else 'Đã dừng bán sản phẩm ')+row['name']+'. Dữ liệu, key và lịch sử vẫn được giữ nguyên.'}
             if action=='delete_product':
-                # Compatibility for older Mini App builds: the former delete action now only stops sales.
                 ident=int(data.get('id') or data.get('product_id') or 0)
                 row=con.execute('SELECT name FROM products WHERE id=? FOR UPDATE',(ident,)).fetchone()
                 if not row: raise HTTPException(status_code=404,detail='Không tìm thấy sản phẩm.')
@@ -2809,13 +2876,16 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(configure_miniapp_menu_button).build()
     telegram_application = app
     app.add_handler(CommandHandler('start', start)); app.add_handler(CommandHandler('admin', admin_cmd))
-    app.add_handler(CallbackQueryHandler(callback)); app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, text_handler))
+    app.add_handler(CallbackQueryHandler(callback))
+    app.add_handler(MessageHandler(
+        (filters.TEXT | filters.PHOTO | filters.Sticker.ALL | filters.VIDEO | filters.ANIMATION | filters.DOCUMENT | filters.AUDIO | filters.VOICE | filters.FORWARDED) & ~filters.COMMAND,
+        text_handler,
+    ))
     app.add_error_handler(error_handler)
     port = int(os.getenv('PORT', '3000'))
     web_thread = threading.Thread(target=lambda: uvicorn.run(web_app, host='0.0.0.0', port=port, log_level='info'), daemon=True)
     web_thread.start()
     log.info('Shop bot + Mini App API started on port %s', port)
-    # Keep the bot polling when Telegram is temporarily unavailable during startup.
     app.run_polling(allowed_updates=Update.ALL_TYPES, bootstrap_retries=-1)
 
 if __name__ == '__main__': main()
