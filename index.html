@@ -8,206 +8,568 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         :root {
-            --bg-color: #06140f;
-            --card-bg: rgba(12, 27, 21, 0.86);
-            --box-bg: rgba(18, 38, 29, 0.78);
-            --text-main: #ffffff;
-            --text-sub: #94a69c;
-            --accent-blue: #00e5a8;
-            --accent-yellow: #ffcc00;
-            --border-color: rgba(126, 170, 146, 0.22);
-            --admin-red: #ff3344;
+            --bg-color: #040d0a;
+            --bg-deep: #020806;
+            --card-bg: rgba(10, 24, 19, 0.78);
+            --box-bg: rgba(14, 33, 26, 0.72);
+            --text-main: #f8fafc;
+            --text-sub: #8ea89c;
+            --accent-blue: #00f5b4;
+            --accent-blue-glow: rgba(0, 245, 180, 0.32);
+            --accent-cyan: #0ea5e9;
+            --accent-yellow: #fbbf24;
+            --border-color: rgba(0, 245, 180, 0.16);
+            --border-subtle: rgba(255, 255, 255, 0.08);
+            --admin-red: #ff3b5c;
         }
 
-        *, *::before, *::after { -webkit-tap-highlight-color: transparent; }
+        *, *::before, *::after {
+            -webkit-tap-highlight-color: transparent;
+            box-sizing: border-box;
+        }
         button, a, input, select, textarea, [onclick] { outline-color: transparent; }
         button:focus, button:focus-visible, [onclick]:focus, [onclick]:focus-visible { outline: none; }
 
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(0, 245, 180, 0.25); border-radius: 99px; }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background: radial-gradient(ellipse at 50% 0%, rgba(0, 229, 168, 0.12), transparent 48%), var(--bg-color);
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            background-image:
+                radial-gradient(circle at 15% -5%, rgba(0, 245, 180, 0.18) 0%, transparent 42%),
+                radial-gradient(circle at 88% 12%, rgba(14, 165, 233, 0.14) 0%, transparent 38%),
+                radial-gradient(circle at 50% 100%, rgba(0, 245, 180, 0.08) 0%, transparent 50%),
+                linear-gradient(180deg, #05120d 0%, #030907 100%);
+            background-attachment: fixed;
             color: var(--text-main);
             margin: 0;
             padding: 16px;
-            padding-bottom: 95px;
+            padding-bottom: 104px;
             font-size: 14px;
             font-weight: 600;
             -webkit-user-select: none;
+            letter-spacing: -0.01em;
         }
 
+        /* ================= LOADING SCREEN ================= */
         #loading-screen {
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: radial-gradient(ellipse at center, #0a2119 0%, #050c09 68%);
+            position: fixed; inset: 0;
+            background:
+                radial-gradient(circle at 50% 42%, rgba(0, 245, 180, 0.14) 0%, transparent 55%),
+                linear-gradient(180deg, #061711 0%, #020705 100%);
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            z-index: 9999; transition: opacity 0.35s ease;
+            z-index: 9999; transition: opacity 0.4s cubic-bezier(0.22, 1, 0.36, 1);
         }
         .loading-spinner {
-            width: 60px; height: 60px; border: 2px solid rgba(0,229,168,0.1);
-            border-top-color: #00e5a8; border-right-color: rgba(0,229,168,0.45);
-            border-radius: 50%; box-shadow: 0 0 18px rgba(0,229,168,0.18);
-            animation: spin 0.9s linear infinite; margin-bottom: 20px;
+            width: 64px; height: 64px;
+            border: 2.5px solid rgba(0, 245, 180, 0.12);
+            border-top-color: #00f5b4;
+            border-right-color: #0ea5e9;
+            border-radius: 50%;
+            box-shadow: 0 0 28px rgba(0, 245, 180, 0.28), inset 0 0 12px rgba(0, 245, 180, 0.15);
+            animation: spin 0.85s cubic-bezier(0.55, 0.15, 0.45, 0.85) infinite;
+            margin-bottom: 22px;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .loading-title { font-size: 18px; font-weight: 800; color: #fff; letter-spacing: 2px; margin: 0; }
-        .loading-subtitle { font-size: 11px; color: var(--text-sub); margin: 6px 0 25px 0; letter-spacing: 1px; }
-        .progress-bar-container { width: 240px; background-color: rgba(0,229,168,0.18); border-radius: 10px; height: 4px; overflow: hidden; border: 0; margin-bottom: 12px; }
-        .progress-bar-fill { width: 0%; height: 100%; background: #00e5a8; box-shadow: 0 0 6px rgba(0,229,168,0.65); transition: width 0.22s ease; }
-        .progress-info-row { width: 240px; display: flex; justify-content: space-between; font-size: 11px; color: var(--text-sub); font-weight: 700; }
+        .loading-title {
+            font-size: 20px; font-weight: 900; letter-spacing: 3px; margin: 0;
+            background: linear-gradient(90deg, #ffffff 0%, #00f5b4 50%, #38bdf8 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .loading-subtitle { font-size: 11px; color: var(--text-sub); margin: 6px 0 26px 0; letter-spacing: 1.5px; text-transform: uppercase; }
+        .progress-bar-container {
+            width: 250px; background-color: rgba(255, 255, 255, 0.06);
+            border-radius: 99px; height: 5px; overflow: hidden;
+            border: 1px solid rgba(0, 245, 180, 0.15); margin-bottom: 12px;
+        }
+        .progress-bar-fill {
+            width: 0%; height: 100%;
+            background: linear-gradient(90deg, #00f5b4, #0ea5e9);
+            box-shadow: 0 0 12px rgba(0, 245, 180, 0.8);
+            border-radius: 99px;
+            transition: width 0.25s ease;
+        }
+        .progress-info-row { width: 250px; display: flex; justify-content: space-between; font-size: 10px; color: var(--text-sub); font-weight: 700; letter-spacing: 0.4px; }
 
-        .tab-content { display: none; }
+        /* ================= TABS TRANSITION ================= */
+        .tab-content { display: none; animation: tabFadeIn 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
         .tab-content.active { display: block; }
+        @keyframes tabFadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
 
-        .user-header { position: sticky; top: 0; z-index: 90; display: flex; align-items: center; justify-content: space-between; margin: -16px -16px 20px; padding: 10px 16px 11px; background: rgba(5, 20, 15, 0.78); border-bottom: 1px solid rgba(0,229,168,0.28); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
-        .user-profile { display: flex; align-items: center; gap: 10px; }
-        .user-avatar { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; background-color: #183329; }
-        .user-info h3 { margin: 0; font-size: 14px; font-weight: 700; color: var(--text-main); max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .user-info p { margin: 2px 0 0 0; font-size: 11px; color: var(--text-sub); }
+        /* ================= USER HEADER ================= */
+        .user-header {
+            position: sticky; top: 0; z-index: 90;
+            display: flex; align-items: center; justify-content: space-between;
+            margin: -16px -16px 20px;
+            padding: 12px 16px;
+            background: rgba(4, 15, 11, 0.82);
+            border-bottom: 1px solid rgba(0, 245, 180, 0.2);
+            box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+            backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+        }
+        .user-profile { display: flex; align-items: center; gap: 11px; }
+        .user-avatar {
+            width: 44px; height: 44px; border-radius: 50%; object-fit: cover;
+            background-color: #132c23;
+            border: 2px solid rgba(0, 245, 180, 0.55);
+            box-shadow: 0 0 14px rgba(0, 245, 180, 0.25);
+        }
+        .user-info h3 { margin: 0; font-size: 14px; font-weight: 800; color: #ffffff; max-width: 155px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .user-info p { margin: 2px 0 0 0; font-size: 11px; color: var(--text-sub); font-family: ui-monospace, SFMono-Regular, monospace; }
         .header-right { display: flex; align-items: flex-end; flex-direction: column; gap: 4px; }
-        .user-balance-box { text-align: right; }
-        .balance-vnd { font-size: 14px; font-weight: 800; color: var(--accent-blue); margin: 0; }
+        .user-balance-box {
+            text-align: right;
+            background: rgba(0, 245, 180, 0.08);
+            border: 1px solid rgba(0, 245, 180, 0.24);
+            padding: 4px 10px;
+            border-radius: 10px;
+        }
+        .balance-vnd {
+            font-size: 14px; font-weight: 900; margin: 0;
+            color: #00f5b4;
+            text-shadow: 0 0 12px rgba(0, 245, 180, 0.35);
+        }
 
-        .role-badge { display: none; font-size: 8px; font-weight: 800; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; }
-        .role-badge.reseller { display: inline-block; background-color: #0b1d30; color: var(--accent-blue); border: 1px solid #14365c; }
-        .role-badge.admin { display: inline-block; background-color: #2c0b0b; color: var(--admin-red); border: 1px solid #461313; }
-        .role-badge.customer { display:inline-block; background:#0b1d30; color:var(--accent-blue); border:1px solid #14365c; }
+        .role-badge { display: none; font-size: 9px; font-weight: 800; padding: 2px 7px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.6px; }
+        .role-badge.reseller { display: inline-block; background: linear-gradient(135deg, rgba(14,165,233,0.2), rgba(0,245,180,0.15)); color: #38bdf8; border: 1px solid rgba(56,189,248,0.4); }
+        .role-badge.admin { display: inline-block; background: linear-gradient(135deg, rgba(255,59,92,0.25), rgba(180,20,45,0.2)); color: #ff5c77; border: 1px solid rgba(255,59,92,0.5); box-shadow: 0 0 10px rgba(255,59,92,0.2); }
+        .role-badge.customer { display: inline-block; background: rgba(0,245,180,0.1); color: #00f5b4; border: 1px solid rgba(0,245,180,0.3); }
 
-        .banner-card { background: linear-gradient(120deg, #071c20 0%, var(--card-bg) 72%); border: 1px solid #173a3c; border-radius: 16px; padding: 14px 16px; display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
-        .banner-icon { width: 58px; height: 58px; flex: 0 0 58px; display: grid; place-items: center; border-radius: 16px; background: linear-gradient(145deg, #082b43, #0b1e32); border: 1px solid #16496c; box-shadow: inset 0 0 18px rgba(0,162,255,0.09), 0 0 18px rgba(0,162,255,0.08); }
-        .banner-icon svg { width: 32px; height: 32px; fill: none; stroke: #00e5a8; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 7px rgba(0,229,168,0.45)); }
-        .banner-icon svg.key-icon, .nav-item svg.key-icon { fill: #00e5a8; stroke: none; }
-        .nav-item svg.key-icon { width: 26px; height: 26px; }
-        .banner-text h2 { margin: 0; font-size: 16px; font-weight: 700; color: var(--text-main); }
-        .banner-text p { margin: 2px 0 0 0; font-size: 11px; color: var(--text-sub); }
-        .main-container { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 20px; padding: 17px 13px; }
-        .section-header { font-size: 13px; font-weight: 700; color: var(--text-main); margin-bottom: 12px; }
+        /* ================= BANNER CARD ================= */
+        .banner-card {
+            position: relative; overflow: hidden;
+            background: linear-gradient(135deg, rgba(0, 245, 180, 0.14) 0%, rgba(14, 165, 233, 0.08) 48%, rgba(10, 24, 19, 0.85) 100%);
+            border: 1px solid rgba(0, 245, 180, 0.26);
+            border-radius: 20px;
+            padding: 16px;
+            display: flex; align-items: center; gap: 14px;
+            margin-bottom: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        }
+        .banner-card::after {
+            content: ''; position: absolute; top: -40%; right: -10%;
+            width: 140px; height: 140px;
+            background: radial-gradient(circle, rgba(0, 245, 180, 0.22) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .banner-icon {
+            width: 56px; height: 56px; flex: 0 0 56px;
+            display: grid; place-items: center;
+            border-radius: 16px;
+            background: linear-gradient(145deg, rgba(0, 245, 180, 0.2), rgba(7, 25, 19, 0.9));
+            border: 1px solid rgba(0, 245, 180, 0.4);
+            box-shadow: 0 6px 18px rgba(0, 245, 180, 0.18), inset 0 1px 0 rgba(255,255,255,0.15);
+        }
+        .banner-icon svg { width: 30px; height: 30px; fill: none; stroke: #00f5b4; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 8px rgba(0,245,180,0.55)); }
+        .banner-icon svg.key-icon, .nav-item svg.key-icon { fill: #00f5b4; stroke: none; }
+        .nav-item svg.key-icon { width: 24px; height: 24px; }
+        .banner-text h2 { margin: 0; font-size: 17px; font-weight: 900; color: #ffffff; letter-spacing: -0.02em; }
+        .banner-text p { margin: 3px 0 0 0; font-size: 12px; color: #a7c4b7; font-weight: 600; }
 
+        /* ================= MAIN CONTAINERS ================= */
+        .main-container, .deposit-card, .history-card, .overview-card, .ref-card, .kho-card, .admin-card {
+            background: linear-gradient(180deg, rgba(13, 30, 24, 0.82) 0%, rgba(8, 20, 16, 0.88) 100%);
+            border: 1px solid rgba(0, 245, 180, 0.16);
+            border-radius: 22px;
+            padding: 18px 14px;
+            margin-bottom: 16px;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+        }
+        .section-header, .history-header {
+            font-size: 13px; font-weight: 800; color: #ffffff;
+            margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+            letter-spacing: 0.2px;
+        }
+        .section-header::before, .history-header::before {
+            content: ''; display: inline-block; width: 4px; height: 14px;
+            border-radius: 4px;
+            background: linear-gradient(180deg, #00f5b4, #0ea5e9);
+            box-shadow: 0 0 8px rgba(0, 245, 180, 0.6);
+        }
+
+        /* ================= APPS GRID ================= */
         .apps-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px; }
         @media(min-width: 400px) { .apps-grid { grid-template-columns: repeat(4, 1fr); } }
-        .app-item { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 14px 10px; text-align: center; cursor: pointer; transition: all 0.15s ease; position: relative; }
-        .app-item.selected { border-color: var(--accent-blue); box-shadow: 0 0 10px rgba(0, 162, 255, 0.2); }
-        .app-logo { width: 52px; height: 52px; border-radius: 12px; object-fit: cover; margin: 0 auto 8px auto; display: block; }
+        .app-item {
+            background: linear-gradient(160deg, rgba(20, 44, 35, 0.85), rgba(11, 26, 20, 0.9));
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px; padding: 14px 10px; text-align: center;
+            cursor: pointer; transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1); position: relative;
+        }
+        .app-item:active { transform: scale(0.97); }
+        .app-item.selected {
+            border-color: rgba(0, 245, 180, 0.75);
+            background: linear-gradient(160deg, rgba(0, 245, 180, 0.14), rgba(12, 30, 23, 0.95));
+            box-shadow: 0 6px 20px rgba(0, 245, 180, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        }
+        .app-logo { width: 54px; height: 54px; border-radius: 14px; object-fit: cover; margin: 0 auto 8px auto; display: block; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
         #ff-app-img { width: 60px; height: 60px; }
-        #ff-app-default-icon { width: 60px !important; height: 60px !important; }
-        .app-name { font-size: 12px; font-weight: 700; color: var(--text-main); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .app-count { font-size: 10px; color: var(--text-sub); margin: 3px 0 0 0; }
-        .edit-app-img-btn { margin-top: 6px; background: #0f2742; border: 1px solid #1d4370; color: var(--accent-blue); font-size: 9px; font-weight: 700; padding: 3px 6px; border-radius: 6px; cursor: pointer; display: none; }
+        #ff-app-default-icon {
+            width: 60px !important; height: 60px !important;
+            background: linear-gradient(145deg, #0a3327, #061c15) !important;
+            border: 1px solid rgba(0, 245, 180, 0.35);
+            border-radius: 15px !important;
+            color: #00f5b4 !important;
+            font-size: 16px !important; font-weight: 900 !important;
+            box-shadow: 0 4px 14px rgba(0, 245, 180, 0.15);
+        }
+        .app-name { font-size: 13px; font-weight: 800; color: #ffffff; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .app-count { font-size: 10px; color: #00f5b4; margin: 3px 0 0 0; font-weight: 700; }
+        .edit-app-img-btn {
+            margin-top: 7px; background: rgba(0, 245, 180, 0.14);
+            border: 1px solid rgba(0, 245, 180, 0.35); color: #00f5b4;
+            font-size: 9px; font-weight: 800; padding: 4px 8px; border-radius: 8px; cursor: pointer; display: none;
+        }
 
-        .select-category-box { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 15px 17px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; margin-bottom: 14px; }
+        /* ================= CATEGORY SELECTOR ================= */
+        .select-category-box {
+            background: linear-gradient(135deg, rgba(20, 44, 35, 0.85) 0%, rgba(12, 28, 22, 0.92) 100%);
+            border: 1px solid rgba(0, 245, 180, 0.25);
+            border-radius: 16px; padding: 14px 16px;
+            display: flex; align-items: center; justify-content: space-between;
+            cursor: pointer; margin-bottom: 14px;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+        }
+        .select-category-box:active { transform: scale(0.985); border-color: #00f5b4; }
         .select-cat-left { display: flex; align-items: center; gap: 12px; }
-        .select-cat-icon { width: 38px; height: 38px; border-radius: 10px; object-fit: cover; }
-        .select-cat-text h4 { margin: 0; font-size: 13px; font-weight: 700; color: var(--text-main); }
-        .select-cat-text p { margin: 2px 0 0 0; font-size: 11px; color: var(--text-sub); }
+        .select-cat-icon { width: 42px; height: 42px; border-radius: 12px; object-fit: cover; border: 1px solid rgba(0, 245, 180, 0.25); }
+        .select-cat-text h4 { margin: 0; font-size: 12px; font-weight: 700; color: var(--text-sub); text-transform: uppercase; letter-spacing: 0.4px; }
+        .select-cat-text p { margin: 3px 0 0 0; font-size: 14px; font-weight: 800; color: #ffffff; }
 
-        .info-notice-box { background-color: #0b1a2e; border: 1px solid #14335c; border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; font-size: 11px; color: var(--text-sub); line-height: 1.4; }
-        .package-card { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 19px 17px; min-height: 88px; box-sizing: border-box; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; cursor: pointer; transition: border-color 0.15s ease; }
-        .package-card.selected { border-color: var(--accent-blue); background-color: #122845; }
-        .pkg-info h5 { margin: 0; font-size: 15px; font-weight: 800; color: var(--text-main); }
-        .pkg-info p { margin: 4px 0 0 0; font-size: 11px; color: var(--text-sub); }
-        .pkg-price-box { background-color: #060f1c; border: 1px solid #142a4a; border-radius: 10px; padding: 8px 14px; text-align: right; }
-        .pkg-new-price { font-size: 14px; color: #ffffff !important; font-weight: 800; margin: 0; }
+        /* ================= NOTICE BOX ================= */
+        .info-notice-box {
+            background: linear-gradient(135deg, rgba(14, 165, 233, 0.12) 0%, rgba(0, 245, 180, 0.08) 100%);
+            border: 1px solid rgba(56, 189, 248, 0.28);
+            border-radius: 14px; padding: 12px 14px; margin-bottom: 16px;
+            font-size: 11.5px; color: #bae6fd; line-height: 1.5; font-weight: 600;
+            display: flex; align-items: flex-start; gap: 9px;
+        }
+        .info-notice-box::before {
+            content: '⚡'; font-size: 14px; line-height: 1.3;
+        }
 
-        .checkout-box { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 16px; padding: 16px; margin-top: 16px; display: none; }
+        /* ================= PACKAGE CARDS ================= */
+        .package-card {
+            background: linear-gradient(135deg, rgba(19, 41, 33, 0.85) 0%, rgba(11, 25, 20, 0.92) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px; padding: 16px 15px; min-height: 82px;
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 10px; cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+            position: relative;
+        }
+        .package-card:active { transform: scale(0.985); }
+        .package-card.selected {
+            border-color: #00f5b4;
+            background: linear-gradient(135deg, rgba(0, 245, 180, 0.16) 0%, rgba(14, 165, 233, 0.08) 55%, rgba(11, 26, 20, 0.96) 100%);
+            box-shadow: 0 8px 24px rgba(0, 245, 180, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+        }
+        .pkg-info h5 { margin: 0; font-size: 15px; font-weight: 800; color: #ffffff; }
+        .pkg-info p { margin: 5px 0 0 0; font-size: 11px; color: var(--text-sub); }
+        .pkg-price-box {
+            background: rgba(4, 13, 10, 0.78);
+            border: 1px solid rgba(0, 245, 180, 0.3);
+            border-radius: 12px; padding: 9px 14px; text-align: right;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+        }
+        .package-card.selected .pkg-price-box {
+            background: rgba(0, 245, 180, 0.15);
+            border-color: #00f5b4;
+        }
+        .pkg-new-price { font-size: 14px; color: #00f5b4 !important; font-weight: 900; margin: 0; letter-spacing: 0.2px; }
+
+        /* ================= CHECKOUT BOX ================= */
+        .checkout-box {
+            background: linear-gradient(180deg, rgba(16, 36, 29, 0.92), rgba(9, 22, 17, 0.96));
+            border: 1px solid rgba(0, 245, 180, 0.28);
+            border-radius: 18px; padding: 16px; margin-top: 16px; display: none;
+            box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+        }
         .checkout-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
-        .checkout-label { font-size: 13px; font-weight: 700; color: var(--text-main); }
-        .qty-control { display: flex; align-items: center; background-color: #060f1c; border: 1px solid #142a4a; border-radius: 10px; overflow: hidden; }
-        .qty-btn { background: none; border: none; color: var(--text-main); font-size: 16px; font-weight: bold; padding: 6px 14px; cursor: pointer; }
-        .qty-val { font-size: 14px; font-weight: 800; color: var(--text-main); padding: 0 10px; }
-        .currency-badge { background-color: #0d325c; color: var(--accent-blue); font-size: 11px; font-weight: 800; padding: 5px 12px; border-radius: 8px; }
+        .checkout-label { font-size: 13px; font-weight: 700; color: #d1fae5; }
+        .qty-control {
+            display: flex; align-items: center;
+            background-color: rgba(4, 13, 10, 0.85);
+            border: 1px solid rgba(0, 245, 180, 0.25);
+            border-radius: 12px; overflow: hidden;
+        }
+        .qty-btn {
+            background: none; border: none; color: #00f5b4;
+            font-size: 17px; font-weight: 900; padding: 6px 15px; cursor: pointer;
+            transition: background 0.15s;
+        }
+        .qty-btn:active { background: rgba(0, 245, 180, 0.15); }
+        .qty-val { font-size: 14px; font-weight: 900; color: #ffffff; padding: 0 10px; }
+        .currency-badge {
+            background: linear-gradient(135deg, rgba(0, 245, 180, 0.18), rgba(14, 165, 233, 0.18));
+            border: 1px solid rgba(0, 245, 180, 0.35);
+            color: #00f5b4; font-size: 11px; font-weight: 900; padding: 5px 12px; border-radius: 9px;
+        }
 
         .voucher-input-row { display: flex; gap: 8px; margin-bottom: 16px; }
-        .voucher-input-row input { flex-grow: 1; background-color: #060f1c; border: 1px solid #142a4a; border-radius: 10px; padding: 10px 12px; color: var(--text-main); font-size: 12px; outline: none; }
-        .apply-voucher-btn { background-color: #0d325c; border: 1px solid #16467d; color: var(--accent-blue); font-size: 12px; font-weight: 800; padding: 0 16px; border-radius: 10px; cursor: pointer; }
+        .voucher-input-row input {
+            flex-grow: 1; background-color: rgba(4, 13, 10, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px; padding: 11px 13px; color: #ffffff; font-size: 12px; outline: none;
+            transition: border-color 0.2s;
+        }
+        .voucher-input-row input:focus { border-color: #00f5b4; }
+        .apply-voucher-btn {
+            background: rgba(0, 245, 180, 0.14);
+            border: 1px solid rgba(0, 245, 180, 0.38);
+            color: #00f5b4; font-size: 12px; font-weight: 800; padding: 0 16px; border-radius: 12px; cursor: pointer;
+            transition: all 0.15s;
+        }
+        .apply-voucher-btn:active { transform: scale(0.96); }
 
         .action-buttons-row { display: flex; gap: 10px; align-items: center; }
-        .buy-now-btn { flex-grow: 1; background: linear-gradient(135deg, #10315c 0%, #0b213d 100%); border: 1px solid #1c497d; color: var(--text-sub); border-radius: 12px; padding: 15px; text-align: center; font-size: 14px; font-weight: 800; cursor: pointer; }
-        .buy-now-btn.active { background: var(--accent-blue); color: #050a14; border-color: var(--accent-blue); }
+        .buy-now-btn {
+            flex-grow: 1;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: var(--text-sub); border-radius: 14px; padding: 15px;
+            text-align: center; font-size: 14px; font-weight: 900; cursor: pointer;
+            letter-spacing: 0.4px; transition: all 0.2s ease;
+        }
+        .buy-now-btn.active {
+            background: linear-gradient(135deg, #00f5b4 0%, #00c48c 55%, #0ea5e9 100%);
+            color: #03120d; border-color: transparent;
+            box-shadow: 0 8px 24px rgba(0, 245, 180, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+        }
+        .buy-now-btn.active:active { transform: scale(0.98); }
 
-        .modal-overlay, .admin-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(0, 0, 0, 0.8); display: none; justify-content: center; align-items: flex-end; z-index: 1000; }
-        .modal-overlay.open, .admin-modal-overlay.open { display: flex; }
-        .modal-content { background-color: #071120; border: 1px solid #1a3559; border-top-left-radius: 24px; border-top-right-radius: 24px; width: 100%; max-height: 82vh; overflow-y: auto; padding: 16px; box-sizing: border-box; }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #102138; }
-        .modal-title { font-size: 14px; font-weight: 800; color: var(--accent-blue); }
-        .close-modal-btn { background-color: #102138; border: none; color: var(--accent-blue); width: 28px; height: 28px; border-radius: 50%; font-weight: bold; cursor: pointer; }
-        .category-option-item { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; cursor: pointer; }
+        /* ================= MODALS ================= */
+        .modal-overlay, .admin-modal-overlay {
+            position: fixed; inset: 0;
+            background-color: rgba(1, 7, 5, 0.84);
+            backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            display: none; justify-content: center; align-items: flex-end; z-index: 1000;
+        }
+        .modal-overlay.open, .admin-modal-overlay.open { display: flex; animation: fadeInOverlay 0.2s ease; }
+        @keyframes fadeInOverlay { from { opacity: 0; } to { opacity: 1; } }
 
-        .deposit-card, .history-card, .overview-card, .ref-card, .kho-card, .admin-card { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 20px; padding: 17px 13px; margin-bottom: 16px; }
-        .deposit-title, .admin-title { font-size: 15px; font-weight: 800; color: var(--accent-yellow); margin: 0 0 4px 0; }
+        .modal-content {
+            background: linear-gradient(180deg, #0c211a 0%, #06120e 100%);
+            border: 1px solid rgba(0, 245, 180, 0.28);
+            border-bottom: none;
+            border-top-left-radius: 26px; border-top-right-radius: 26px;
+            width: 100%; max-height: 82vh; overflow-y: auto; padding: 18px 16px 26px;
+            box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.65);
+            animation: slideUpModal 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        @keyframes slideUpModal { from { transform: translateY(30px); opacity: 0.6; } to { transform: translateY(0); opacity: 1; } }
+
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+        .modal-title { font-size: 14px; font-weight: 900; color: #00f5b4; letter-spacing: 0.4px; }
+        .close-modal-btn {
+            background-color: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #ffffff; width: 30px; height: 30px; border-radius: 50%; font-weight: bold; cursor: pointer;
+            display: grid; place-items: center;
+        }
+        .category-option-item {
+            background: rgba(18, 40, 32, 0.78);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 15px; padding: 12px 14px;
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 10px; cursor: pointer; transition: all 0.15s ease;
+        }
+        .category-option-item:active { border-color: #00f5b4; transform: scale(0.985); }
+
+        /* ================= DEPOSIT TAB ================= */
+        .deposit-title, .admin-title { font-size: 15px; font-weight: 900; color: var(--accent-yellow); margin: 0 0 4px 0; letter-spacing: 0.3px; }
         .admin-title { color: var(--admin-red); }
-        .deposit-desc { font-size: 11px; color: var(--text-sub); margin: 0 0 14px 0; }
-        .amount-input-box { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 12px; padding: 12px 14px; display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-        .amount-input-box input { background: none; border: none; color: var(--text-main); font-size: 14px; font-weight: 600; width: 100%; outline: none; }
-        .qr-btn { width: 100%; background: linear-gradient(135deg, #ffd700 0%, #ffaa00 100%); color: #050a14; border: none; padding: 12px; border-radius: 12px; font-size: 13px; font-weight: 800; cursor: pointer; }
-        .history-header { font-size: 13px; font-weight: 700; color: var(--accent-blue); margin-bottom: 12px; }
-        .history-item, .kho-item { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 12px; padding: 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
-        .history-info .amount { font-size: 14px; font-weight: 800; color: var(--text-main); display: flex; align-items: center; gap: 5px; }
-        .vnd-tag { background-color: #0d325c; color: var(--accent-blue); font-size: 8px; font-weight: 800; padding: 2px 4px; border-radius: 3px; }
-        .history-info .code { font-size: 10px; color: var(--text-sub); margin-top: 3px; }
-        .history-time { font-size: 10px; color: var(--text-sub); text-align: right; }
-        .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-        .stat-box { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 14px; padding: 12px 6px; text-align: center; }
-        .stat-box .stat-val { font-size: 14px; font-weight: 800; color: var(--text-main); margin: 0; }
-        .stat-box .stat-lbl { font-size: 10px; color: var(--text-sub); margin: 3px 0 0 0; }
-        .ref-desc { font-size: 11px; color: var(--text-sub); margin: 0 0 10px 0; }
-        .ref-link-box { background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 12px; padding: 10px 12px; font-size: 11px; color: var(--text-sub); word-break: break-all; margin-bottom: 10px; }
-        .ref-btn { width: 100%; background-color: #0d325c; color: var(--accent-blue); border: 1px solid #16467d; padding: 11px; border-radius: 12px; font-size: 12px; font-weight: 700; cursor: pointer; margin-bottom: 10px; }
-        .ref-commission { display: flex; justify-content: space-between; align-items: center; background-color: var(--box-bg); border: 1px solid #1c3150; border-radius: 12px; padding: 12px; font-size: 12px; font-weight: 700; }
-        .ref-commission span:last-child { color: var(--accent-yellow); }
-        .kho-item { display: block; padding: 10px; }
-        .key-row { background-color: #060f1c; border: 1px solid #142a4a; border-radius: 10px; padding: 6px 8px; display: flex; flex-direction:column; align-items:stretch; gap:5px; margin-top: 5px; min-width:0; max-width:100%; box-sizing:border-box; }
-        .key-row > div {min-width:0; width:100%; overflow-wrap:anywhere; word-break:break-word;}
-        .key-text {overflow-wrap:anywhere; word-break:break-all;}
-        .key-text { font-family: monospace; font-size: 11px; color: var(--accent-blue); }
+        .deposit-desc { font-size: 11.5px; color: var(--text-sub); margin: 0 0 14px 0; line-height: 1.45; }
+        .amount-input-box {
+            background-color: rgba(4, 13, 10, 0.85);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+            border-radius: 14px; padding: 13px 15px;
+            display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+        }
+        .amount-input-box input { background: none; border: none; color: #ffffff; font-size: 15px; font-weight: 700; width: 100%; outline: none; }
+        .qr-btn {
+            width: 100%;
+            background: linear-gradient(135deg, #fde047 0%, #f59e0b 100%);
+            color: #140c00; border: none; padding: 14px; border-radius: 14px;
+            font-size: 13.5px; font-weight: 900; cursor: pointer; letter-spacing: 0.4px;
+            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.32), inset 0 1px 0 rgba(255,255,255,0.5);
+            transition: transform 0.15s;
+        }
+        .qr-btn:active { transform: scale(0.98); }
+
+        .history-item, .kho-item {
+            background: rgba(16, 36, 29, 0.72);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            border-radius: 14px; padding: 13px; margin-bottom: 9px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .history-info .amount { font-size: 14px; font-weight: 800; color: #00f5b4; display: flex; align-items: center; gap: 5px; }
+        .vnd-tag { background-color: rgba(0,245,180,0.15); color: #00f5b4; font-size: 8px; font-weight: 800; padding: 2px 5px; border-radius: 4px; }
+        .history-info .code { font-size: 11px; color: #cbd5e1; margin-top: 3px; }
+        .history-time { font-size: 10px; color: var(--text-sub); text-align: right; line-height: 1.4; }
+
+        /* ================= PROFILE & STATS ================= */
+        .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+        .stat-box {
+            background: linear-gradient(160deg, rgba(20, 44, 35, 0.8), rgba(10, 24, 19, 0.9));
+            border: 1px solid rgba(0, 245, 180, 0.16);
+            border-radius: 16px; padding: 14px 6px; text-align: center;
+        }
+        .stat-box .stat-val { font-size: 14px; font-weight: 900; color: #00f5b4; margin: 0; }
+        .stat-box .stat-lbl { font-size: 9.5px; color: var(--text-sub); margin: 4px 0 0 0; font-weight: 700; letter-spacing: 0.3px; }
+
+        .ref-desc { font-size: 11.5px; color: var(--text-sub); margin: 0 0 10px 0; line-height: 1.45; }
+        .ref-link-box {
+            background-color: rgba(4, 13, 10, 0.85);
+            border: 1px solid rgba(0, 245, 180, 0.22);
+            border-radius: 13px; padding: 11px 13px;
+            font-size: 11.5px; color: #00f5b4; font-family: ui-monospace, SFMono-Regular, monospace;
+            word-break: break-all; margin-bottom: 10px;
+        }
+        .ref-btn {
+            width: 100%; background: rgba(0, 245, 180, 0.14);
+            color: #00f5b4; border: 1px solid rgba(0, 245, 180, 0.35);
+            padding: 12px; border-radius: 13px; font-size: 12px; font-weight: 800; cursor: pointer; margin-bottom: 10px;
+        }
+        .ref-commission {
+            display: flex; justify-content: space-between; align-items: center;
+            background-color: rgba(16, 36, 29, 0.72);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 13px; padding: 12px 14px; font-size: 12px; font-weight: 700;
+        }
+        .ref-commission span:last-child { color: var(--accent-yellow); font-weight: 900; }
+
+        /* ================= KHO KEYS ================= */
+        .kho-item { display: block; padding: 12px; }
+        .key-row {
+            background-color: rgba(4, 13, 10, 0.78);
+            border: 1px solid rgba(0, 245, 180, 0.18);
+            border-radius: 11px; padding: 6px;
+            display: flex; flex-direction: column; align-items: stretch; gap: 5px;
+            margin-top: 7px; min-width: 0; max-width: 100%;
+        }
+        .key-row > div { min-width: 0; width: 100%; overflow-wrap: anywhere; word-break: break-word; }
+        .key-text { overflow-wrap: anywhere; word-break: break-all; font-family: monospace; font-size: 11px; color: #00f5b4; }
         .key-date { font-size: 9px; color: var(--text-sub); margin-top: 2px; }
-        .copy-btn { background: #14335c; border: none; color: var(--text-main); border-radius: 6px; padding: 6px 8px; cursor: pointer; }
-        .key-copy-text { width:100%; text-align:left; font-family:monospace; font-size:11px; color:var(--accent-blue); background:#07111f; border:1px solid #1d3655; border-radius:8px; padding:8px; overflow-wrap:anywhere; word-break:break-all; cursor:pointer; }
+        .copy-btn { background: rgba(0, 245, 180, 0.18); border: none; color: #ffffff; border-radius: 6px; padding: 6px 8px; cursor: pointer; }
+        .key-copy-text {
+            width: 100%; text-align: left;
+            font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11.5px;
+            color: #00f5b4; background: rgba(3, 10, 8, 0.85);
+            border: 1px dashed rgba(0, 245, 180, 0.35);
+            border-radius: 9px; padding: 9px 10px;
+            overflow-wrap: anywhere; word-break: break-all; cursor: pointer;
+            transition: background 0.15s;
+        }
+        .key-copy-text:active { background: rgba(0, 245, 180, 0.15); }
 
-        .admin-panel-card { display: none; }
+        /* ================= ADMIN PANEL ================= */
+        .admin-panel-card { display: none; border-color: rgba(255, 59, 92, 0.35); }
         .admin-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 10px; }
-        .admin-action-btn { background-color: #1a1518; border: 1px solid #3d2025; color: #ff6677; padding: 11px; border-radius: 10px; font-size: 12px; font-weight: 700; cursor: pointer; text-align: center; }
-        .admin-price-btn { background: linear-gradient(135deg, rgba(0,229,168,0.18), rgba(14,165,233,0.16)); border: 1px solid rgba(0,229,168,0.45); color: #00e5a8; grid-column: 1 / -1; }
+        .admin-action-btn {
+            background: linear-gradient(145deg, rgba(38, 16, 22, 0.85), rgba(22, 10, 14, 0.92));
+            border: 1px solid rgba(255, 59, 92, 0.32);
+            color: #ff8598; padding: 11px 9px; border-radius: 12px;
+            font-size: 11.5px; font-weight: 800; cursor: pointer; text-align: center;
+            transition: transform 0.15s;
+        }
+        .admin-action-btn:active { transform: scale(0.97); }
+        .admin-price-btn { background: linear-gradient(135deg, rgba(0,245,180,0.18), rgba(14,165,233,0.16)); border: 1px solid rgba(0,245,180,0.45); color: #00f5b4; grid-column: 1 / -1; }
 
-        .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background-color: rgba(3, 12, 8, 0.78); border-top: 1px solid rgba(0,229,168,0.24); display: flex; justify-content: space-around; padding: 10px 0 16px 0; z-index: 100; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
-        .nav-item { background: none; border: none; display: flex; flex-direction: column; align-items: center; color: #00e5a8; cursor: pointer; font-size: 10px; font-weight: 800; gap: 4px; width: 33.33%; }
-        .nav-item.active { color: #00e5a8; }
-        .nav-item svg { width: 22px; height: 22px; fill: none; stroke: #00e5a8; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-        body :where(.user-info h3, .banner-text h2, .section-header, .app-name,
-        .select-cat-text h4, .pkg-info h5, .checkout-label, .qty-val,
-        .balance-vnd, .history-info .amount, .stat-box .stat-val,
-        [style*="color:white"], [style*="color: white"]) {
-            font-size: calc(1em + 1px) !important;
-            font-weight: 800 !important;
+        /* ================= FLOATING BOTTOM NAV ================= */
+        .bottom-nav {
+            position: fixed; bottom: 12px; left: 14px; right: 14px;
+            background: rgba(6, 18, 14, 0.86);
+            border: 1px solid rgba(0, 245, 180, 0.26);
+            border-radius: 22px;
+            display: flex; justify-content: space-around; align-items: center;
+            padding: 8px 6px; z-index: 100;
+            box-shadow: 0 12px 35px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
         }
-        .purchase-success-overlay { position:fixed; inset:0; z-index:1200; display:none; align-items:center; justify-content:center; padding:18px; background:rgba(1,7,15,.86); box-sizing:border-box; }
-        .purchase-success-overlay.open { display:flex; }
-        .purchase-success-card { width:100%; max-width:460px; max-height:88vh; overflow-y:auto; background:var(--card-bg); border:1px solid var(--border-color); border-radius:20px; padding:18px 14px; box-sizing:border-box; }
-        .purchase-success-title { margin:0 0 14px; text-align:center; font-size:18px; font-weight:900; color:#fff; }
-        .purchase-success-details { padding:12px; border-radius:12px; background:var(--box-bg); line-height:1.7; font-size:14px; font-weight:700; }
-        .purchase-success-keys { margin-top:12px; }
-        .purchase-success-keys h3 { margin:0 0 6px; font-size:14px; font-weight:900; color:#fff; }
-        .success-key-button { width:100%; margin:5px 0; padding:9px; color:var(--accent-blue); background:#07111f; border:1px solid #1d3655; border-radius:8px; font:700 12px/1.45 monospace; text-align:left; overflow-wrap:anywhere; word-break:break-all; cursor:pointer; }
-        .purchase-success-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:14px; }
-        .purchase-success-actions button { min-height:44px; padding:10px; border:0; border-radius:10px; background:#0d325c; color:#fff; font-size:12px; font-weight:800; cursor:pointer; }
-        .purchase-success-actions .success-buy-again { grid-column:1 / -1; background:var(--accent-blue); color:#07111f; }
-        .banner-card, .main-container, .deposit-card, .history-card, .overview-card,
-        .ref-card, .kho-card, .admin-card, .purchase-success-card {
-            background-color: rgba(12, 27, 21, 0.76);
-            border-color: rgba(126, 170, 146, 0.2);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
+        .nav-item {
+            background: none; border: none;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            color: #6b877b; cursor: pointer;
+            font-size: 10px; font-weight: 800; gap: 4px;
+            width: 31%; padding: 6px 0; border-radius: 15px;
+            transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+            letter-spacing: 0.3px;
         }
-        .banner-card { background: linear-gradient(120deg, rgba(0,229,168,0.09), rgba(12,27,21,0.72) 72%); }
-        .banner-icon { background: linear-gradient(145deg, rgba(0,229,168,0.14), rgba(8,25,18,0.72)); border-color: rgba(0,229,168,0.28); box-shadow: inset 0 0 18px rgba(0,229,168,0.08), 0 0 18px rgba(0,229,168,0.06); }
-        .app-item, .select-category-box, .package-card, .checkout-box,
-        .history-item, .kho-item, .stat-box, .amount-input-box, .ref-link-box,
-        .key-row, .purchase-success-details {
-            background-color: rgba(18, 38, 29, 0.68);
-            border-color: rgba(180, 211, 194, 0.12);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
+        .nav-item svg { width: 21px; height: 21px; fill: none; stroke: #6b877b; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; transition: all 0.2s; }
+        .nav-item svg.key-icon { fill: #6b877b; stroke: none; transition: all 0.2s; }
+
+        .nav-item.active {
+            color: #00f5b4;
+            background: linear-gradient(180deg, rgba(0, 245, 180, 0.16) 0%, rgba(0, 245, 180, 0.05) 100%);
+            box-shadow: inset 0 0 0 1px rgba(0, 245, 180, 0.25);
         }
-        .package-card.selected, .app-item.selected { border-color: rgba(0,229,168,0.72); box-shadow: 0 0 12px rgba(0,229,168,0.14); }
-        .key-copy-text, .success-key-button { background: rgba(4,16,11,0.58); border-color: rgba(0,229,168,0.2); }
-        .ref-btn, .apply-voucher-btn { background: rgba(0,229,168,0.12); border-color: rgba(0,229,168,0.3); }
+        .nav-item.active svg {
+            stroke: #00f5b4;
+            filter: drop-shadow(0 0 6px rgba(0, 245, 180, 0.6));
+            transform: translateY(-1px);
+        }
+        .nav-item.active svg.key-icon {
+            fill: #00f5b4; stroke: none;
+            filter: drop-shadow(0 0 6px rgba(0, 245, 180, 0.6));
+            transform: translateY(-1px);
+        }
+
+        /* ================= PURCHASE SUCCESS MODAL ================= */
+        .purchase-success-overlay {
+            position: fixed; inset: 0; z-index: 1200;
+            display: none; align-items: center; justify-content: center;
+            padding: 18px; background: rgba(1, 7, 5, 0.88);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        }
+        .purchase-success-overlay.open { display: flex; animation: fadeInOverlay 0.22s ease; }
+        .purchase-success-card {
+            width: 100%; max-width: 460px; max-height: 88vh; overflow-y: auto;
+            background: linear-gradient(180deg, #0e261e 0%, #06130e 100%);
+            border: 1px solid rgba(0, 245, 180, 0.42);
+            border-radius: 24px; padding: 20px 16px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.75), 0 0 30px rgba(0, 245, 180, 0.18);
+        }
+        .purchase-success-title {
+            margin: 0 0 14px; text-align: center; font-size: 18px; font-weight: 900;
+            background: linear-gradient(90deg, #ffffff, #00f5b4);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .purchase-success-details {
+            padding: 13px; border-radius: 14px;
+            background: rgba(18, 42, 33, 0.78);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            line-height: 1.75; font-size: 13.5px; font-weight: 700;
+        }
+        .purchase-success-keys { margin-top: 14px; }
+        .purchase-success-keys h3 { margin: 0 0 7px; font-size: 13.5px; font-weight: 900; color: #00f5b4; }
+        .success-key-button {
+            width: 100%; margin: 5px 0; padding: 10px;
+            color: #00f5b4; background: rgba(3, 11, 8, 0.88);
+            border: 1px dashed rgba(0, 245, 180, 0.4); border-radius: 10px;
+            font: 700 12px/1.45 ui-monospace, SFMono-Regular, monospace;
+            text-align: left; overflow-wrap: anywhere; word-break: break-all; cursor: pointer;
+        }
+        .purchase-success-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 16px; }
+        .purchase-success-actions button {
+            min-height: 44px; padding: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px;
+            background: rgba(255, 255, 255, 0.08); color: #ffffff;
+            font-size: 12.5px; font-weight: 800; cursor: pointer;
+        }
+        .purchase-success-actions .success-buy-again {
+            grid-column: 1 / -1; border: none;
+            background: linear-gradient(135deg, #00f5b4 0%, #0ea5e9 100%);
+            color: #03120d; font-weight: 900;
+            box-shadow: 0 6px 20px rgba(0, 245, 180, 0.3);
+        }
     </style>
 </head>
 <body>
@@ -272,7 +634,7 @@
             <div id="select-category-container">
                 <div class="select-category-box" onclick="openCategoryModal('buy')">
                     <div class="select-cat-left">
-                        <svg id="selected-cat-default-icon" class="select-cat-icon" viewBox="0 0 24 24" fill="#00e5a8" style="background: #101c30; padding: 6px; border-radius: 10px; box-sizing:border-box;">
+                        <svg id="selected-cat-default-icon" class="select-cat-icon" viewBox="0 0 24 24" fill="#00f5b4" style="background: rgba(0,245,180,0.12); padding: 8px; border-radius: 12px; box-sizing:border-box;">
                             <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
                         </svg>
                         <img id="selected-category-image" class="select-cat-icon" alt="Ảnh danh mục" style="display:none;">
@@ -281,7 +643,7 @@
                             <p id="selected-cat-name">Tất cả sản phẩm</p>
                         </div>
                     </div>
-                    <span style="color: var(--text-sub); font-size: 16px;">›</span>
+                    <span style="color: #00f5b4; font-size: 18px; font-weight: 800;">›</span>
                 </div>
             </div>
 
@@ -349,7 +711,7 @@
     <div class="admin-modal-overlay" id="admin-price-modal" onclick="closePriceModal(event)">
         <div class="modal-content" onclick="event.stopPropagation()">
             <div class="modal-header">
-                <div class="modal-title" id="price-modal-title" style="color:#00e5a8;">SỬA GIÁ BÁN RIÊNG (MINI APP / BOT)</div>
+                <div class="modal-title" id="price-modal-title" style="color:#00f5b4;">SỬA GIÁ BÁN RIÊNG (MINI APP / BOT)</div>
                 <button class="close-modal-btn" onclick="closePriceModal()">✕</button>
             </div>
             <p id="price-modal-desc" style="font-size:11px; color:var(--text-sub); margin-top:0;">
@@ -388,27 +750,27 @@
             <button class="qr-btn" onclick="createDepositQR()">TẠO MÃ QR NẠP</button>
         </div>
 
-        <div class="deposit-card" id="qr-result-container" style="display: none; text-align: center; border-color: var(--accent-blue);">
+        <div class="deposit-card" id="qr-result-container" style="display: none; text-align: center; border-color: #00f5b4;">
             <div style="font-size: 11px; color: var(--text-sub); font-weight: 700; letter-spacing: 1px; margin-bottom: 4px;">ĐANG THANH TOÁN</div>
             <div style="font-size: 15px; font-weight: 800; color: var(--text-main); margin-bottom: 8px;">Nạp tiền vào tài khoản</div>
-            <div id="qr-display-amount" style="font-size: 22px; font-weight: 900; color: #00ff88; margin-bottom: 14px;">0đ</div>
+            <div id="qr-display-amount" style="font-size: 24px; font-weight: 900; color: #00f5b4; text-shadow: 0 0 15px rgba(0,245,180,0.4); margin-bottom: 14px;">0đ</div>
 
-            <div style="background: #ffffff; padding: 12px; border-radius: 16px; display: inline-block; margin-bottom: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
+            <div style="background: #ffffff; padding: 12px; border-radius: 18px; display: inline-block; margin-bottom: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.55);">
                 <img id="viet-qr-img" src="" alt="VietQR Code" style="width: 220px; height: 220px; object-fit: contain; display: block;" />
             </div>
 
-            <div style="background: #1f1b0a; border: 1px solid #57460c; border-radius: 12px; padding: 12px; text-align: left; font-size: 11px; color: #ffcc00; margin-bottom: 14px; display: flex; gap: 10px; align-items: flex-start;">
+            <div style="background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.35); border-radius: 14px; padding: 12px; text-align: left; font-size: 11.5px; color: #fde68a; margin-bottom: 14px; display: flex; gap: 10px; align-items: flex-start; line-height: 1.45;">
                 <span style="font-size: 16px;">⚠️</span>
                 <span><b>Lưu ý:</b> Vui lòng chuyển đúng số tiền và nội dung. Số dư chỉ được cộng sau khi Admin xác nhận giao dịch ngân hàng.</span>
             </div>
 
-            <button onclick="confirmPaidAction()" style="width: 100%; background: linear-gradient(135deg, #00a2ff 0%, #0066cc 100%); color: white; border: none; padding: 14px; border-radius: 14px; font-size: 13px; font-weight: 800; cursor: pointer; box-shadow: 0 4px 12px rgba(0,162,255,0.3);">
+            <button onclick="confirmPaidAction()" style="width: 100%; background: linear-gradient(135deg, #00f5b4 0%, #0ea5e9 100%); color: #03120d; border: none; padding: 14px; border-radius: 14px; font-size: 13.5px; font-weight: 900; cursor: pointer; box-shadow: 0 6px 20px rgba(0,245,180,0.3);">
                 ĐÃ CHUYỂN TIỀN
             </button>
-            <button id="cancel-deposit-btn" onclick="cancelDepositCode()" style="width:100%;margin-top:8px;background:#552020;color:#fff;border:1px solid #8d3333;padding:12px;border-radius:12px;font-size:12px;font-weight:800;cursor:pointer;">✖ HỦY MÃ NẠP</button>
+            <button id="cancel-deposit-btn" onclick="cancelDepositCode()" style="width:100%;margin-top:9px;background:rgba(255,59,92,0.14);color:#ff8598;border:1px solid rgba(255,59,92,0.38);padding:12px;border-radius:14px;font-size:12px;font-weight:800;cursor:pointer;">✖ HỦY MÃ NẠP</button>
             
-            <div style="margin-top: 10px; font-size: 11px; color: var(--text-sub);">
-                Đang chờ thanh toán... Hết hạn sau: <span id="countdown-timer" style="color: #ff3344; font-weight: 700;">05:00</span>
+            <div style="margin-top: 12px; font-size: 11.5px; color: var(--text-sub);">
+                Đang chờ thanh toán... Hết hạn sau: <span id="countdown-timer" style="color: #ff3b5c; font-weight: 800;">05:00</span>
             </div>
         </div>
 
@@ -463,7 +825,7 @@
         </div>
         <div class="ref-card">
             <div class="history-header">HỆ THỐNG GIỚI THIỆU (REF)</div>
-            <p class="ref-desc">Nhận ngay <b style="color: var(--accent-blue);">0%</b> hoa hồng khi người được bạn mời nạp tiền thành công.</p>
+            <p class="ref-desc">Nhận ngay <b style="color: #00f5b4;">0%</b> hoa hồng khi người được bạn mời nạp tiền thành công.</p>
             <div class="ref-link-box" id="ref-link-text">Đang tải link giới thiệu...</div>
             <button class="ref-btn" onclick="copyRefLink()">COPY LINK GIỚI THIỆU</button>
             <div class="ref-commission"><span>Tiền Hoa Hồng Đã Nhận:</span><span>0đ</span></div>
@@ -763,7 +1125,7 @@
                     const group = document.createElement('div');
                     group.className = 'kho-item';
                     const heading = document.createElement('div');
-                    heading.style.cssText = 'font-size:13px;font-weight:800;margin-bottom:6px;';
+                    heading.style.cssText = 'font-size:13px;font-weight:800;margin-bottom:6px;color:#ffffff;';
                     heading.textContent = `#${p.id} · ${p.category_name || 'Sản phẩm'} · ${p.product_name} – ${p.duration_label || ''} · ${p.quantity} key · ${Number(p.total_price || 0).toLocaleString('vi-VN')}đ · ${formatVietnamTime(p.created_at)}`;
                     group.appendChild(heading);
                     keys.forEach(key => {
@@ -876,7 +1238,7 @@
             }
         }
 
-function renderCategoryIconPreview(catName) {
+        function renderCategoryIconPreview(catName) {
             const imgEl = document.getElementById('selected-category-image');
             const defEl = document.getElementById('selected-cat-default-icon');
             const iconUrl = getCustomCatIcon(catName);
@@ -905,8 +1267,8 @@ function renderCategoryIconPreview(catName) {
                 let item = document.createElement('div');
                 item.className = 'category-option-item';
                 const previewHtml = iconUrl
-                    ? `<img src="${iconUrl}" alt="${cleanName}" style="width:36px; height:36px; border-radius:8px; object-fit:cover; flex-shrink:0;">`
-                    : `<div style="width:36px; height:36px; background:#0d2847; border-radius:8px; display:flex; align-items:center; justify-content:center; color:#00e5a8; font-size:11px; font-weight:800; flex-shrink:0;">MỤC</div>`;
+                    ? `<img src="${iconUrl}" alt="${cleanName}" style="width:38px; height:38px; border-radius:10px; object-fit:cover; flex-shrink:0;">`
+                    : `<div style="width:38px; height:38px; background:rgba(0,245,180,0.12); border:1px solid rgba(0,245,180,0.28); border-radius:10px; display:flex; align-items:center; justify-content:center; color:#00f5b4; font-size:11px; font-weight:800; flex-shrink:0;">MỤC</div>`;
                 item.innerHTML = `
                     <div style="display:flex; align-items:center; gap:10px; overflow:hidden;">
                         ${previewHtml}
@@ -915,7 +1277,7 @@ function renderCategoryIconPreview(catName) {
                             <p style="margin:2px 0 0 0; font-size:10px; color:var(--text-sub);">${iconUrl ? 'Đã có ảnh thư mục' : 'Chưa có ảnh riêng'}</p>
                         </div>
                     </div>
-                    <button onclick="triggerCategoryFilePicker('${cleanName.replace(/'/g, "\\'")}')" style="background:#14335c; border:none; color:white; font-size:11px; font-weight:700; padding:8px 12px; border-radius:8px; cursor:pointer; flex-shrink:0;">+ Đổi ảnh</button>
+                    <button onclick="triggerCategoryFilePicker('${cleanName.replace(/'/g, "\\'")}')" style="background:rgba(0,245,180,0.16); border:1px solid rgba(0,245,180,0.35); color:#00f5b4; font-size:11px; font-weight:800; padding:8px 12px; border-radius:10px; cursor:pointer; flex-shrink:0;">+ Đổi ảnh</button>
                 `;
                 listContainer.appendChild(item);
             });
@@ -926,7 +1288,7 @@ function renderCategoryIconPreview(catName) {
             document.getElementById('admin-category-modal').classList.remove('open');
         }
 
-                function renderCategoriesList() {
+        function renderCategoriesList() {
             let listContainer = document.getElementById('category-options-list');
             listContainer.innerHTML = '';
 
@@ -935,11 +1297,12 @@ function renderCategoryIconPreview(catName) {
                 item.className = 'category-option-item';
                 item.innerHTML = `
                     <div style="display:flex; align-items:center; gap:12px; width:100%;" onclick="chooseCategory('${cat.name}'); closeCategoryModal();">
-                        ${cat.icon ? `<img src="${cat.icon}" alt="" style="width:38px;height:38px;object-fit:cover;border-radius:10px;">` : '<div style="width:38px;height:38px;background:#0d2847;border-radius:10px;display:flex;justify-content:center;align-items:center;color:var(--accent-blue);font-weight:bold;">FF</div>'}
+                        ${cat.icon ? `<img src="${cat.icon}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:11px;">` : '<div style="width:40px;height:40px;background:rgba(0,245,180,0.12);border:1px solid rgba(0,245,180,0.28);border-radius:11px;display:flex;justify-content:center;align-items:center;color:#00f5b4;font-weight:900;">FF</div>'}
                         <div style="flex-grow:1;">
-                            <h5 style="margin:0; font-size:13px; font-weight:750; color:white;">${cat.name}</h5>
-                            <p style="margin:2px 0 0 0; font-size:10px; color:var(--text-sub);">Nhấn để chọn danh mục</p>
+                            <h5 style="margin:0; font-size:13.5px; font-weight:800; color:white;">${cat.name}</h5>
+                            <p style="margin:2px 0 0 0; font-size:10.5px; color:var(--text-sub);">Nhấn để chọn danh mục</p>
                         </div>
+                        <span style="color:#00f5b4;font-weight:900;">›</span>
                     </div>
                 `;
                 listContainer.appendChild(item);
@@ -1002,7 +1365,7 @@ function renderCategoryIconPreview(catName) {
                 const row = document.createElement('div');
                 row.className = 'category-option-item';
                 row.onclick = () => openProductPriceDurationModal(categoryName, product.name);
-                row.innerHTML = `<div style="min-width:0;flex-grow:1"><h5 style="margin:0;font-size:13px;font-weight:800;color:#fff;">${product.name}</h5><p style="margin:3px 0 0;font-size:10px;color:var(--text-sub);">Thư mục: ${categoryName} · ${(product.options||[]).length} gói</p></div><span style="color:#00e5a8;font-size:14px;font-weight:800;">Chọn ›</span>`;
+                row.innerHTML = `<div style="min-width:0;flex-grow:1"><h5 style="margin:0;font-size:13px;font-weight:800;color:#fff;">${product.name}</h5><p style="margin:3px 0 0;font-size:10px;color:var(--text-sub);">Thư mục: ${categoryName} · ${(product.options||[]).length} gói</p></div><span style="color:#00f5b4;font-size:14px;font-weight:800;">Chọn ›</span>`;
                 bodyEl.appendChild(row);
             });
             document.getElementById('admin-price-modal').classList.add('open');
@@ -1018,14 +1381,14 @@ function renderCategoryIconPreview(catName) {
             const mode = activePriceMode;
             const label = mode === 'regular' ? 'GIÁ THƯỜNG' : 'GIÁ SELL';
             titleEl.textContent = `⏱ ${productName}`;
-            descEl.innerHTML = `<button onclick="openProductPriceModal('${mode}')" style="background:#102138;border:1px solid #1f3c63;color:#00e5a8;font-size:11px;font-weight:800;padding:5px 10px;border-radius:8px;cursor:pointer;margin-bottom:8px;">← Quay lại sản phẩm</button><div>Chọn thời hạn để sửa ${label.toLowerCase()}.</div>`;
+            descEl.innerHTML = `<button onclick="openProductPriceModal('${mode}')" style="background:rgba(0,245,180,0.12);border:1px solid rgba(0,245,180,0.35);color:#00f5b4;font-size:11px;font-weight:800;padding:6px 11px;border-radius:9px;cursor:pointer;margin-bottom:8px;">← Quay lại sản phẩm</button><div>Chọn thời hạn để sửa ${label.toLowerCase()}.</div>`;
             bodyEl.innerHTML = '';
             if (!prod || !(prod.options||[]).length) { bodyEl.innerHTML='<p class="deposit-desc">Sản phẩm chưa có gói thời hạn.</p>'; return; }
             (prod.options||[]).forEach(opt => {
                 const current = Number(mode === 'regular' ? (opt.regular_price ?? opt.price ?? 0) : (opt.sell_price || 0));
                 const card=document.createElement('div'); card.className='category-option-item'; card.style.marginBottom='10px';
                 card.onclick=()=>editProductOptionPrice(productName,opt,mode,categoryName);
-                card.innerHTML=`<div style="min-width:0;flex-grow:1"><h5 style="margin:0;font-size:13px;font-weight:800;color:#fff;">${fullDurationLabel(opt.duration_label||opt.duration)}</h5><p style="margin:3px 0 0;font-size:10px;color:var(--text-sub);">${mode==='regular'?'Giá người dùng thường':'Giá Sell'} hiện tại</p></div><strong style="color:#00e5a8;">${current.toLocaleString('vi-VN')}đ · Sửa</strong>`;
+                card.innerHTML=`<div style="min-width:0;flex-grow:1"><h5 style="margin:0;font-size:13px;font-weight:800;color:#fff;">${fullDurationLabel(opt.duration_label||opt.duration)}</h5><p style="margin:3px 0 0;font-size:10px;color:var(--text-sub);">${mode==='regular'?'Giá người dùng thường':'Giá Sell'} hiện tại</p></div><strong style="color:#00f5b4;">${current.toLocaleString('vi-VN')}đ · Sửa</strong>`;
                 bodyEl.appendChild(card);
             });
         }
@@ -1058,7 +1421,7 @@ function renderCategoryIconPreview(catName) {
                 body.innerHTML='';
                 (ov.products||[]).filter(prod => categoryId === null || Number(prod.category_id) === Number(categoryId)).forEach(prod=>{
                     const row=document.createElement('div'); row.className='category-option-item'; row.style.marginBottom='8px';
-                    row.innerHTML=`<div style="min-width:0;flex:1"><h5 style="margin:0;color:#fff;font-size:13px;">${prod.name}</h5><p style="margin:3px 0 0;color:var(--text-sub);font-size:10px;">${prod.category_name} · ${prod.is_active?'🟢 Đang bán':'⛔ Đã dừng'}</p></div><strong style="color:${prod.is_active?'#ff6677':'#00e5a8'}">${prod.is_active?'Dừng bán':'Bật lại'}</strong>`;
+                    row.innerHTML=`<div style="min-width:0;flex:1"><h5 style="margin:0;color:#fff;font-size:13px;">${prod.name}</h5><p style="margin:3px 0 0;color:var(--text-sub);font-size:10px;">${prod.category_name} · ${prod.is_active?'🟢 Đang bán':'⛔ Đã dừng'}</p></div><strong style="color:${prod.is_active?'#ff8598':'#00f5b4'}">${prod.is_active?'Dừng bán':'Bật lại'}</strong>`;
                     row.onclick=async()=>{ if(!confirm(`${prod.is_active?'Dừng bán':'Bật bán lại'} sản phẩm ${prod.name}?`)) return; try { const r=await adminApi('toggle_product_sale',{product_id:Number(prod.id)}); await loadCatalog({force:true}); tg.showAlert(r.message); openProductSaleToggleModal(categoryId); } catch(e){tg.showAlert(e.message||'Không thể cập nhật trạng thái bán.');} };
                     body.appendChild(row);
                 });
@@ -1099,6 +1462,7 @@ function renderCategoryIconPreview(catName) {
             selectedCategory.products.forEach(product => {
                 const heading = document.createElement('div');
                 heading.className = 'section-header';
+                heading.style.marginTop = '8px';
                 heading.textContent = product.name;
                 list.appendChild(heading);
 
@@ -1115,7 +1479,7 @@ function renderCategoryIconPreview(catName) {
                     const stock = document.createElement('p');
                     const hasSupplierStock = option.stock !== null && option.stock !== undefined && option.stock !== '';
                     stock.textContent = 'Kho còn: ' + (hasSupplierStock ? Number(option.stock) : 0) + ' key';
-                    stock.style.color = Number(option.stock) > 0 ? '#22c55e' : '#ff4d4f';
+                    stock.style.color = Number(option.stock) > 0 ? '#00f5b4' : '#ff4d6d';
                     stock.style.fontWeight = '800';
                     
                     info.append(name, stock);
@@ -1339,7 +1703,7 @@ function renderCategoryIconPreview(catName) {
                 if (!memoNode) {
                     memoNode = document.createElement('div');
                     memoNode.id = 'deposit-transfer-content';
-                    memoNode.style.cssText = 'color:#ffcc00;font-weight:800;margin:10px 0;word-break:break-all;';
+                    memoNode.style.cssText = 'color:#fbbf24;font-weight:800;margin:10px 0;word-break:break-all;';
                     document.querySelector('#qr-result-container').insertBefore(memoNode, document.querySelector('#qr-result-container button'));
                 }
                 memoNode.textContent = 'NỘI DUNG CK: ' + data.transfer_content;
@@ -1364,7 +1728,7 @@ function renderCategoryIconPreview(catName) {
                 let memoNode = document.getElementById('deposit-transfer-content');
                 if (!memoNode) {
                     memoNode = document.createElement('div'); memoNode.id = 'deposit-transfer-content';
-                    memoNode.style.cssText = 'font-size:13px;font-weight:800;color:#ffcc00;margin:8px 0;';
+                    memoNode.style.cssText = 'font-size:13px;font-weight:800;color:#fbbf24;margin:8px 0;';
                     document.getElementById('qr-result-container').insertBefore(memoNode, document.getElementById('qr-result-container').querySelector('button'));
                 }
                 memoNode.textContent = 'Nội dung chuyển khoản: ' + data.transfer_content;
