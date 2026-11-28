@@ -2878,7 +2878,7 @@ def main():
     app.add_handler(CommandHandler('start', start)); app.add_handler(CommandHandler('admin', admin_cmd))
     app.add_handler(CallbackQueryHandler(callback))
     app.add_handler(MessageHandler(
-        (filters.TEXT | filters.PHOTO | filters.Sticker.ALL | filters.VIDEO | filters.ANIMATION | filters.DOCUMENT | filters.AUDIO | filters.VOICE | filters.FORWARDED) & ~filters.COMMAND,
+        (filters.TEXT | filters.PHOTO | filters.Sticker.ALL | filters.VIDEO | filters.ANIMATION | filters.Document.ALL | filters.AUDIO | filters.VOICE | filters.FORWARDED) & ~filters.COMMAND,
         text_handler,
     ))
     app.add_error_handler(error_handler)
